@@ -101,6 +101,7 @@ MKLDNNExecNetwork::MKLDNNExecNetwork(const InferenceEngine::ICNNNetwork &network
         }
     }
 
+    NetPass::UnrollTI(static_cast<ICNNNetwork&>(*_clonedNetwork));
     MKLDNNGraph::ApplyUnrollPasses(static_cast<ICNNNetwork&>(*_clonedNetwork));
 
     if (_cfg.enableDynamicBatch) {
