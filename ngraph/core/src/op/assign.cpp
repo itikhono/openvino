@@ -37,44 +37,44 @@ void op::v3::Assign::validate_and_infer_types()
     auto output_shape = get_input_partial_shape(0);
     // Temporary disable the checks below to support the case when Assign and ReadValue ops are in
     // the separate sub-graphs.
-/*    if (!m_variable)
-    {
-        NodeVector start_nodes;
-        for (const auto& input : inputs())
+    /*    if (!m_variable)
         {
-            start_nodes.push_back(input.get_source_output().get_node_shared_ptr());
-        }
-        auto nodes = topological_sort(start_nodes);
-        for (const auto& node : nodes)
-        {
-            if (auto read_value = as_type_ptr<op::v3::ReadValue>(node))
+            NodeVector start_nodes;
+            for (const auto& input : inputs())
             {
-                if (read_value->get_variable_id() == m_variable_id)
-                    m_variable = read_value->get_variable();
+                start_nodes.push_back(input.get_source_output().get_node_shared_ptr());
             }
-        }
-        NODE_VALIDATION_CHECK(
-            this, m_variable != nullptr, "Can't find variable with id = ", m_variable_id);
-    }*/
+            auto nodes = topological_sort(start_nodes);
+            for (const auto& node : nodes)
+            {
+                if (auto read_value = as_type_ptr<op::v3::ReadValue>(node))
+                {
+                    if (read_value->get_variable_id() == m_variable_id)
+                        m_variable = read_value->get_variable();
+                }
+            }
+            NODE_VALIDATION_CHECK(
+                this, m_variable != nullptr, "Can't find variable with id = ", m_variable_id);
+        }*/
 
-/*    auto variable_info = m_variable->get_info();
-    NODE_VALIDATION_CHECK(this,
-                          m_variable_id == variable_info.variable_id,
-                          "Variables identifiers are inconsistent.");
-    NODE_VALIDATION_CHECK(
-        this, arg_t == variable_info.data_type, "Variables types are inconsistent.");*/
-/*
-    if (output_shape.is_static() && variable_info.data_shape.is_static())
-    {
+    /*    auto variable_info = m_variable->get_info();
         NODE_VALIDATION_CHECK(this,
-                              output_shape == variable_info.data_shape,
-                              "Variables output shapes are inconsistent.");
-        set_output_type(0, arg_t, output_shape);
-    }
-    else
-    {
-        set_output_type(0, arg_t, PartialShape::dynamic());
-    }*/
+                              m_variable_id == variable_info.variable_id,
+                              "Variables identifiers are inconsistent.");
+        NODE_VALIDATION_CHECK(
+            this, arg_t == variable_info.data_type, "Variables types are inconsistent.");*/
+    /*
+        if (output_shape.is_static() && variable_info.data_shape.is_static())
+        {
+            NODE_VALIDATION_CHECK(this,
+                                  output_shape == variable_info.data_shape,
+                                  "Variables output shapes are inconsistent.");
+            set_output_type(0, arg_t, output_shape);
+        }
+        else
+        {
+            set_output_type(0, arg_t, PartialShape::dynamic());
+        }*/
     set_output_type(0, arg_t, output_shape);
 }
 
