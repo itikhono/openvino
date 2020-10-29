@@ -1259,7 +1259,7 @@ void MKLDNNReduceNode::getSupportedDescriptors() {
 
     auto *layer = getCnnLayer().get();
     keep_dims = layer->GetParamAsBool("keep_dims", false);
-
+    keep_dims = true;
     if (keep_dims) {
         if (getParentEdgeAt(REDUCE_DATA)->getDims().ndims() != getChildEdgeAt(0)->getDims().ndims())
             THROW_IE_EXCEPTION << "Reduce layer with name " << getName() << "gets incorrect number of input/output dimensions!";
