@@ -244,7 +244,7 @@ bool MKLDNNExecNetwork::CanProcessDynBatch(const InferenceEngine::ICNNNetwork &n
         return false;
 
     bool check_result = true;
-    details::UnorderedDFS(allLayers, secondLayers.begin()->second, [&](CNNLayerPtr layer) {
+    details::UnorderedDFS(allLayers, secondLayers.begin()->second, [&](const CNNLayerPtr& layer) {
         auto type = TypeFromName(layer->type);
         // This is WA for Tile layer
         auto tileLayer = dynamic_cast<TileLayer *>(layer.get());

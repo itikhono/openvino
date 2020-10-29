@@ -76,11 +76,13 @@ static std::vector<DataPtr> getAllInputs(const std::vector<DataPtr>& heads) {
 
 std::vector<CNNLayerPtr> TIBodySortTopologically(const TensorIterator::Body& body) {
     std::vector<CNNLayerPtr> all_layers;
-
-    auto all_input_layers = getAllInputs(body.inputs);
+    auto total_entry_point = body.inputs;
+    total_entry_point.insert(total_entry_point.end(),
+                             body.outputs.begin(), body.outputs.end());
+    const auto& all_input_layers = getAllInputs(body.inputs);
     CNNNetForestDFS(
         all_input_layers,
-        [&](CNNLayerPtr current) {
+        [&](const CNNLayerPtr& current) {
             all_layers.push_back(current);
         },
         false);

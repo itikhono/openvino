@@ -49,7 +49,7 @@ bool GNAPluginNS::AreLayersSupported(InferenceEngine::ICNNNetwork& network, std:
     bool check_result = true;
     InferenceEngine::details::UnorderedDFS(allLayers,
                                            secondLayers.begin()->second,
-                                           [&](const InferenceEngine::CNNLayerPtr layer) {
+                                           [&](const InferenceEngine::CNNLayerPtr& layer) {
                                                if (LayerTypeFromStr(layer->type) == LayerType::NO_TYPE) {
                                                    errMessage = "The plugin does not support layer: " + layer->name + ":" + layer->type + "\n";
                                                    check_result =  false;
