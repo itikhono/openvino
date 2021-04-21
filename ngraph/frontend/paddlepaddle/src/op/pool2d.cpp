@@ -78,7 +78,7 @@ static void get_paddings(const NodeContext& node, ngraph::Shape& pad_begin, ngra
 }
   
 
-OutputVector pool2d (const NodeContext& node) {
+NamedOutputs pool2d (const NodeContext& node) {
     // TODO : resolve padding according to spec
     auto data = node.get_ng_input("X"); 
 
@@ -95,13 +95,13 @@ OutputVector pool2d (const NodeContext& node) {
         pooling_type = "max";
     }            
 
-    MY_ASSERT((pooling_type == "max") || (pooling_type == "avg"), 
-                    "pool2d: not supported pooling type !"); 
-    MY_ASSERT(kernel_shape.size()==1 || kernel_shape.size()==2, 
+    PDPD_ASSERT((pooling_type == "max") || (pooling_type == "avg"),
+                    "pool2d: not supported pooling type !");
+    PDPD_ASSERT(kernel_shape.size()==1 || kernel_shape.size()==2,
                     "pool2d: ksize must be 1 or 2!");                 
 
     PartialShape input_shape = data.get_partial_shape();
-    MY_ASSERT(input_shape.rank().is_static(), "pool2d: X rank must be static!"); 
+    PDPD_ASSERT(input_shape.rank().is_static(), "pool2d: X rank must be static!");
     int32_t input_rank = input_shape.rank().get_length();  
     uint64_t input_h = input_shape[input_rank-2].get_length();
     uint64_t input_w =  input_shape[input_rank-1].get_length();
@@ -116,16 +116,16 @@ OutputVector pool2d (const NodeContext& node) {
                                     kernel_shape.end(), 
                                     [](int32_t i){return i==1;}))) { 
         if (pooling_type == "max") {
-            return {std::make_shared<ngraph::opset6::MaxPool>(
+            return node.default_single_output_mapping({std::make_shared<ngraph::opset6::MaxPool>(
                         data,
                         ngraph::Strides({1,1}),
                         ngraph::Shape{0,0}, //FIXME pads_begin
                         ngraph::Shape{0,0}, //pads_end
-                        ngraph::Shape{input_h,input_w})};
+                        ngraph::Shape{input_h,input_w})}, {"Out"});
         } else {
             // TODO : resolve axes according to rank
             auto axes = ngraph::opset6::Constant::create(ngraph::element::i64, {2}, {input_rank-2, input_rank-1});
-            return {std::make_shared<ngraph::opset6::ReduceMean>(data, axes, true)};           
+            return node.default_single_output_mapping({std::make_shared<ngraph::opset6::ReduceMean>(data, axes, true)}, {"Out"});
         }                    
     } else if (adaptive) {        
         uint64_t pool_size_Height, pool_size_Width;
@@ -146,28 +146,27 @@ OutputVector pool2d (const NodeContext& node) {
         }
  
         if (pooling_type == "max") {
-            return {std::make_shared<ngraph::opset6::MaxPool>(
+            return node.default_single_output_mapping({std::make_shared<ngraph::opset6::MaxPool>(
                         data,
                         ngraph::Strides{stride_h, stride_w},
                         pad_begin, pad_end,
                         ngraph::Shape{kernel_h, kernel_w},
                         rounding_type,
-                        auto_pad)};  
+                        auto_pad)}, {"Out"});
         } else {
             bool exclude_pad = node.get_attribute<bool>("exclusive") ? true : false;
-            return {std::make_shared<ngraph::opset6::AvgPool>(
+            return node.default_single_output_mapping({std::make_shared<ngraph::opset6::AvgPool>(
                         data,
                         ngraph::Strides{stride_h, stride_w},
                         pad_begin, pad_end,
                         ngraph::Shape{kernel_h, kernel_w},
                         exclude_pad,
                         rounding_type,
-                        auto_pad)};
+                        auto_pad)}, {"Out"});
         }          
     } else {
         auto strides = node.get_attribute<std::vector<int32_t>>("strides");
         auto paddings = node.get_attribute<std::vector<int32_t>>("paddings");
-
         uint64_t kernel_h, kernel_w;
         if (kernel_shape.size() == 1) {
             kernel_h = kernel_w = kernel_shape[0];
@@ -186,25 +185,25 @@ OutputVector pool2d (const NodeContext& node) {
         }        
 
         if (pooling_type == "max") {
-            return {std::make_shared<ngraph::opset6::MaxPool>(
+            return node.default_single_output_mapping({std::make_shared<ngraph::opset6::MaxPool>(
                         data,
                         ngraph::Strides(strides.begin(), strides.end()),
                         pad_begin, pad_end,
                         ngraph::Shape{kernel_h, kernel_w},
                         rounding_type,
-                        auto_pad)};  
+                        auto_pad)}, {"Out"});
         } else {
             bool exclude_pad = node.get_attribute<bool>("exclusive") ? true : false;
-            return {std::make_shared<ngraph::opset6::AvgPool>(
+            return node.default_single_output_mapping({std::make_shared<ngraph::opset6::AvgPool>(
                         data,
                         ngraph::Strides(strides.begin(), strides.end()),
                         pad_begin, pad_end,
                         ngraph::Shape{kernel_h, kernel_w},
                         exclude_pad,
                         rounding_type,
-                        auto_pad)};
+                        auto_pad)}, {"Out"});
         }                                  
-    }  
+    }
 }
 
 }}}}

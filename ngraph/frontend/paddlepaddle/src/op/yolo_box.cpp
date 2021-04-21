@@ -25,7 +25,7 @@ namespace op {
     using namespace opset6;
     using namespace element;
 
-OutputVector yolo_box (const NodeContext& node_context) {
+NamedOutputs yolo_box (const NodeContext& node_context) {
     //model_name = node.output('Boxes', 0)
 
     auto data = node_context.get_ng_input("X");
@@ -70,11 +70,11 @@ OutputVector yolo_box (const NodeContext& node_context) {
 
     //  range x/y
     std::vector<float> range_x, range_y;
-    for (size_t i = 0; i < input_width; i++)
+    for (int i = 0; i < input_width; i++)
     {
         range_x.push_back(i);
     }
-    for (size_t j = 0; j < input_height; j++)
+    for (int j = 0; j < input_height; j++)
     {
         range_y.push_back(j);
     }
@@ -266,18 +266,17 @@ OutputVector yolo_box (const NodeContext& node_context) {
     auto node_score_shape = Constant::create<int64_t>(i64, {score_shape.size()}, score_shape);
     auto node_score_new_shape = std::make_shared<Reshape>(node_score, node_score_shape, false); //outputs=node.output('Scores')
 
-#if 1
-    return OutputVector{node_pred_box_result, node_score_new_shape};
-#else
-    //FIXME: combine the two output nodes into 1, to satisfy frontend/pdpd.
-    auto node_result_concat = std::make_shared<Concat>(OutputVector{node_pred_box_result, node_score_new_shape}, 2);
+    NamedOutputs named_outputs;
+    const auto& out_names = node_context.get_output_names();
+    PDPD_ASSERT(out_names.size() == 2, "Unexpected number of outputs");
 
-    auto result_split_axis = Constant::create<int64_t>(i64, {1}, {2}); //(1,xx,6) -> bboxes(1,xx,4) and scores(1,xx,class_num)
-    auto result_split_axes_lengths = Constant::create<int64_t>(i64, {2}, {4, class_num});
-    auto node_result = std::make_shared<VariadicSplit>(node_result_concat, result_split_axis, result_split_axes_lengths);
-    //return OutputVector{node_result}; 
-    return node_result->outputs();
-#endif   
+    auto boxes = std::find(out_names.begin(), out_names.end(), "Boxes");
+    PDPD_ASSERT(boxes != out_names.end(), "Expected output not found");
+    auto scores = std::find(out_names.begin(), out_names.end(), "Scores");
+    PDPD_ASSERT(scores != out_names.end(), "Expected output not found");
+    named_outputs[*boxes] = {node_pred_box_result};
+    named_outputs[*scores] = {node_score_new_shape};
+    return named_outputs;
 }
 
 }}}}

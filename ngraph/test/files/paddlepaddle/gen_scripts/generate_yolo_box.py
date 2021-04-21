@@ -3,7 +3,10 @@
 #
 import numpy as np
 from save_model import saveModel
-
+# it's better to use PYTHON_PATH
+import sys
+sys.path.append('/home/itikhonov/OpenVINO/openvino/bin/intel64/Debug/lib/python_api/python3.6/')
+from openvino.inference_engine import IECore
 data_type = 'float32'
 
 def yolo_box(name : str, x, img_size, attrs : dict):
@@ -33,6 +36,23 @@ def yolo_box(name : str, x, img_size, attrs : dict):
             fetch_list=[boxes, scores])             
 
         saveModel(name, exe, feedkeys=['x', 'img_size'], fetchlist=[boxes, scores], inputs=[x, img_size], outputs=outs)
+
+        # IE inference
+        ie = IECore()
+        path_to_ie_model = "../models/yolo_box_test1/yolo_box_test1"
+        net = ie.read_network(model=path_to_ie_model + ".xml", weights=path_to_ie_model + ".bin")
+        exec_net = ie.load_network(net, "CPU")
+        res = exec_net.infer({'x': x, 'img_size': img_size})
+
+        # print results
+        print(outs)
+        print(res)
+        # compare results: IE vs PDPD
+        idx = 0
+        for key in res:
+            comp = np.all(np.isclose(outs[idx], res[key], rtol=1e-05, atol=1e-08, equal_nan=True))
+            assert comp, "PDPD and IE results are different"
+            idx = idx + 1
 
     return
 
