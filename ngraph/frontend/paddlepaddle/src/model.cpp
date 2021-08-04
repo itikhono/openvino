@@ -47,7 +47,7 @@ namespace ngraph
             void setElementType(Place::Ptr place, const ngraph::element::Type&);
             void setTensorValue(Place::Ptr place, const void* value);
 
-            std::vector<std::shared_ptr<OpPlacePDPD>> returnOpPlaces();
+            std::vector<std::shared_ptr<OpPlacePDPD>> getOpPlaces() const;
             std::map<std::string, std::shared_ptr<TensorPlacePDPD>> getVarPlaces() const
             {
                 return m_var_places;
@@ -62,7 +62,7 @@ namespace ngraph
             template <typename T>
             void loadConsts(const std::basic_string<T>& folder_with_weights,
                             std::istream* weight_stream);
-            void determine_cut_nodes();
+            std::vector<std::shared_ptr<OpPlacePDPD>> determine_cut_nodes() const;
 
             std::vector<std::shared_ptr<OpPlacePDPD>> m_op_places;
             std::map<std::string, std::shared_ptr<TensorPlacePDPD>> m_var_places;
@@ -236,17 +236,17 @@ namespace ngraph
         } // namespace pdpd
 
         std::vector<std::shared_ptr<OpPlacePDPD>>
-            InputModelPDPD::InputModelPDPDImpl::returnOpPlaces()
+            InputModelPDPD::InputModelPDPDImpl::getOpPlaces() const
         {
             if (m_graph_changed)
             {
-                determine_cut_nodes();
-                m_graph_changed = false;
+                return determine_cut_nodes();
             }
             return m_op_places;
         }
 
-        void InputModelPDPD::InputModelPDPDImpl::determine_cut_nodes()
+        std::vector<std::shared_ptr<OpPlacePDPD>>
+            InputModelPDPD::InputModelPDPDImpl::determine_cut_nodes() const
         {
             std::queue<OpPlacePDPD*> q;
             std::unordered_set<OpPlacePDPD*> visited;
@@ -259,7 +259,9 @@ namespace ngraph
                 {
                     auto pdpd_output_op =
                         std::dynamic_pointer_cast<OpPlacePDPD>(output->get_producing_operation());
-                    if (pdpd_output_op && !visited.count(pdpd_output_op.get()))
+                    PDPD_ASSERT(pdpd_output_op != nullptr,
+                                "Output doesn't have producing operation");
+                    if (!visited.count(pdpd_output_op.get()))
                     {
                         visited.insert(pdpd_output_op.get());
                         q.push(pdpd_output_op.get());
@@ -293,7 +295,7 @@ namespace ngraph
                 }
             }
             std::reverse(new_op_places.begin(), new_op_places.end());
-            m_op_places.swap(new_op_places);
+            return new_op_places;
         }
 
         template <typename T>
@@ -490,6 +492,7 @@ namespace ngraph
 
         void InputModelPDPD::InputModelPDPDImpl::setTensorValue(Place::Ptr place, const void* value)
         {
+            m_graph_changed = true;
             auto tensor_place = pdpd::castToTensorPlace(place);
             auto p_shape = tensor_place->get_partial_shape();
             auto type = tensor_place->get_element_type();
@@ -516,9 +519,9 @@ namespace ngraph
         {
         }
 
-        std::vector<std::shared_ptr<OpPlacePDPD>> InputModelPDPD::returnOpPlaces()
+        std::vector<std::shared_ptr<OpPlacePDPD>> InputModelPDPD::getOpPlaces() const
         {
-            return _impl->returnOpPlaces();
+            return _impl->getOpPlaces();
         }
 
         std::map<std::string, std::shared_ptr<TensorPlacePDPD>> InputModelPDPD::getVarPlaces() const
