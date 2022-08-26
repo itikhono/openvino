@@ -26,7 +26,13 @@ void TransformationTestsF::TearDown() {
     }
 
     manager.register_pass<ngraph::pass::CheckUniqueNames>(m_unh, m_soft_names_comparison);
+    manager.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/test_model_gru_cell/model.xml",
+                                               "/home/itikhono/OpenVINO/tmp/test_model_gru_cell/model.bin");
     manager.run_passes(function);
+    ov::pass::Manager mg;
+    mg.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/test_model_gru_cell/model_2.xml",
+                                               "/home/itikhono/OpenVINO/tmp/test_model_gru_cell/model_2.bin");
+    mg.run_passes(function);
     if (!m_disable_rt_info_check) {
     ASSERT_NO_THROW(check_rt_info(function));
     }

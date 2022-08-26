@@ -6,6 +6,7 @@
 
 #include "ngraph/graph_util.hpp"
 #include "ngraph/opsets/opset5.hpp"
+#include "openvino/op/util/multi_subgraph_base.hpp"
 
 BWDCMP_RTTI_DEFINITION(ov::op::util::MultiSubGraphOp);
 BWDCMP_RTTI_DEFINITION(ov::op::util::MultiSubGraphOp::SliceInputDescription);

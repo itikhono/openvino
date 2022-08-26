@@ -25,6 +25,7 @@
 #include <transformations/common_optimizations/fq_mul_fusion.hpp>
 #include <transformations/common_optimizations/fq_reshape_fusion.hpp>
 #include <transformations/common_optimizations/gelu_fusion.hpp>
+#include <transformations/common_optimizations/gru_cell_fusion.hpp>
 #include <transformations/common_optimizations/hsigmoid_fusion.hpp>
 #include <transformations/common_optimizations/hswish_fusion.hpp>
 #include <transformations/common_optimizations/leaky_relu_fusion.hpp>
@@ -71,6 +72,9 @@
 #include <transformations/smart_reshape/reshape_sinking.hpp>
 
 #include "itt.hpp"
+#include "transformations/common_optimizations/augru_cell_fusion.hpp"
+#include "transformations/common_optimizations/eliminate_dublicated_subgraph_inputs.hpp"
+#include "transformations/common_optimizations/gru_sequence_fusion.hpp"
 
 bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph::Function>& f) {
     RUN_ON_FUNCTION_SCOPE(MOCTransformations);
@@ -96,6 +100,7 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     if (!m_use_shapes) {
         manager.register_pass<ngraph::pass::DisableShapeOfConstantFolding>();
     }
+
     // RemoveConcatZeroDimInput and RemoveMultiSubGraphOpDanglingParams
     // should be performed before first ConstantFolding call.
     // The passes can deteach graph branches where zero dimesion is calculated.
@@ -104,12 +109,16 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     // RemoveConcatZeroDimInput and RemoveMultiSubGraphOpDanglingParams should be called together.
     manager.register_pass<ov::pass::RemoveConcatZeroDimInput>();
     manager.register_pass<ov::pass::Validate>();
+    manager.register_pass<ov::pass::EliminateDublicatedSubgraphOpInputs>();
     manager.register_pass<ov::pass::RemoveMultiSubGraphOpDanglingParams>();
+    manager.register_pass<ov::pass::GRUCellFusion>();
+    manager.register_pass<ov::pass::AUGRUCellFusion>();
+    manager.register_pass<ov::pass::SequenceFusion>();
+
     manager.register_pass<ov::pass::FoldSubgraphEmptyInputs>();
     manager.register_pass<ngraph::pass::DisableRandomUniformConstantFolding>();
     manager.register_pass<ngraph::pass::ConstantFolding>();
     manager.register_pass<ngraph::pass::Validate>();
-
     // FusedFilteringBoxesBySize transformation has the complex pattern
     // which can be affected by further transformations. So we have to
     // execute it at the beginning of the pipeline. Also, this pass resolves
@@ -219,7 +228,12 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     manager.register_pass<ngraph::pass::ConstantFolding>();
 
     manager.run_passes(f);
-
+    /*int id = 0;
+    ov::pass::Manager m;
+    m.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/dien_NEW.xml",
+                                         "/home/itikhono/OpenVINO/tmp/dien_serialized/dien_NEW.bin");
+    id++;
+    m.run_passes(f);*/
     if (!m_use_shapes) {
         // Restore original shapes to the nGraph Function
         for (auto&& param : f->get_parameters()) {
