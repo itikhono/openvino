@@ -74,7 +74,7 @@
 #include "itt.hpp"
 #include "transformations/common_optimizations/augru_cell_fusion.hpp"
 #include "transformations/common_optimizations/eliminate_dublicated_subgraph_inputs.hpp"
-#include "transformations/common_optimizations/gru_sequence_fusion.hpp"
+#include "transformations/common_optimizations/sequence_fusion.hpp"
 
 bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph::Function>& f) {
     RUN_ON_FUNCTION_SCOPE(MOCTransformations);
