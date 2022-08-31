@@ -561,8 +561,6 @@ bool ov::Model::evaluate(ov::TensorVector& output_tensors,
                     output_tensors.push_back(it->second);
                 }
             }
-            if (node->get_friendly_name() == "TensorArrayV2Read/TensorListGetItem")
-                std::cout << "XXXXXX " << node->get_friendly_name() << std::endl;
             if (node->evaluate(output_tensors, input_tensors, evaluation_context)) {
                 for (size_t i = 0; i < node->outputs().size(); i++) {
                     const auto& v = node->output(i);

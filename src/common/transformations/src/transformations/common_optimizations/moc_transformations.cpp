@@ -226,7 +226,6 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     manager.register_pass<ngraph::pass::AlignEltwiseInputRanks>();
 
     manager.register_pass<ngraph::pass::ConstantFolding>();
-
     manager.run_passes(f);
     /*int id = 0;
     ov::pass::Manager m;

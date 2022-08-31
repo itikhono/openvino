@@ -125,7 +125,6 @@ void gru_cell(const T* X,
             reference::clamp(gate.data(), gate.data(), static_cast<T>(-clip), static_cast<T>(clip), gate.size());
         }
         if (activation == "relu") {
-            std::cout << "XXXXX reference relu" << std::endl;
             reference::relu(gate.data(), gate.data(), gate.size());
         } else if (activation == "sigmoid") {
             reference::sigmoid(gate.data(), gate.data(), gate.size());
