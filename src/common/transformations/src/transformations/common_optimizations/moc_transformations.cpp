@@ -113,6 +113,7 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     manager.register_pass<ov::pass::RemoveMultiSubGraphOpDanglingParams>();
     manager.register_pass<ov::pass::GRUCellFusion>();
     manager.register_pass<ov::pass::AUGRUCellFusion>();
+    manager.register_pass<ngraph::pass::ConstantFolding>();
     manager.register_pass<ov::pass::SequenceFusion>();
 
     manager.register_pass<ov::pass::FoldSubgraphEmptyInputs>();

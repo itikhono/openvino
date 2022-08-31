@@ -22,17 +22,12 @@ bool is_equal_consts(const shared_ptr<Node>& l, const shared_ptr<Node>& r) {
     auto l_const = dynamic_pointer_cast<Constant>(l);
     auto r_const = dynamic_pointer_cast<Constant>(r);
     if (l_const && r_const) {
-        std::cout << "XXXX COnstants" << std::endl;
-
-        bool is_equal =
-            l_const->get_element_type() == r_const->get_element_type() && l_const->get_shape() == r_const->get_shape();
-        if (!is_equal) {
-            std::cout << "" << std::endl;
-        }
-        return is_equal;
+        auto l_ptr = l_const->get_data_ptr();
+        auto r_ptr = r_const->get_data_ptr();
+        size_t bytes = shape_size(l_const->get_shape()) * l_const->get_element_type().size();
+        return l_const->get_element_type() == r_const->get_element_type() &&
+               l_const->get_shape() == r_const->get_shape() && (l_ptr == r_ptr || memcmp(l_ptr, r_ptr, bytes) == 0);
     }
-    std::cout << "XXXX name " << l->get_friendly_name();
-    std::cout << "XXXX name " << r->get_friendly_name();
     return false;
 }
 
@@ -94,8 +89,6 @@ shared_ptr<RNNCellBase> find_cell_chain(ov::pass::NodeRegister& cp_from,
         auto prev = current->input_value(1).get_node_shared_ptr();
         if (auto prev_cell = dynamic_pointer_cast<RNNCellBase>(prev)) {
             if (!is_equal_cells(prev_cell, current)) {
-                std::cout << "XXXXXXXX Cells are not equal" << std::endl;
-                std::cout << "Cells cnt : " << cells_cnt << std::endl;
                 break;
             }
 
@@ -176,7 +169,6 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
     shared_ptr<Node> sequence;
     OutputVector outputs(1);
     if (dynamic_pointer_cast<LSTMCell>(first_cell)) {
-        cout << "XXXXXXXX LSTMSequence pattern detected" << endl;
         const auto Ct_in = cp_to.make<Unsqueeze>(first_cell->input_value(2), axis_1);
         sequence = cp_to.make<LSTMSequence>(X_in,
                                             Ht_in,
@@ -200,7 +192,6 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
         outputs.resize(2);
         outputs[1] = cp_to.make<Squeeze>(sequence->output(2), axis_1);
     } else if (auto gru_cell = dynamic_pointer_cast<GRUCell>(first_cell)) {
-        cout << "XXXXXXXX GRUSequence pattern detected" << endl;
         sequence = cp_to.make<GRUSequence>(X_in,
                                            Ht_in,
                                            sequence_lengths_in,
@@ -215,7 +206,6 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
                                            first_cell->get_clip(),
                                            gru_cell->get_linear_before_reset());
     } else if (dynamic_pointer_cast<RNNCell>(first_cell)) {
-        cout << "XXXXXXXX RNNSequence pattern detected" << endl;
         sequence = cp_to.make<RNNSequence>(X_in,
                                            Ht_in,
                                            sequence_lengths_in,
@@ -229,7 +219,6 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
                                            first_cell->get_activations_beta(),
                                            first_cell->get_clip());
     } else if (dynamic_pointer_cast<ov::op::internal::AUGRUCell>(first_cell)) {
-        cout << "XXXXXXXX AUGRUSequence pattern detected" << endl;
         const auto A_in = cp_to.make<Concat>(attention_to_concat, 1);
         sequence = cp_to.make<ov::op::internal::AUGRUSequence>(X_in,
                                                                Ht_in,
@@ -246,7 +235,6 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
 
     outputs[0] = cp_to.make<Squeeze>(sequence->output(1), axis_1);
     replace_outputs_update_names(last_cell->outputs(), outputs);
-    cout << "XXXXXXXX Sequence pattern replaced" << endl;
 
     if (!h_inputs_to_redirect.empty()) {
         auto squeeze_Y = cp_to.make<Squeeze>(sequence->output(0), axis_1);
@@ -268,13 +256,11 @@ ov::pass::SequenceFusion::SequenceFusion() {
 
     auto cell = wrap_type<RNNCellBase>();
     ov::matcher_pass_callback callback = [=](pattern::Matcher& m) {
-        cout << "XXXXXXXX Sequance Transformation" << endl;
         NodeRegister copy_from;
         NodeRegister copy_to;
         auto cell = m.get_match_root();
         shared_ptr<RNNCellBase> current_cell = dynamic_pointer_cast<RNNCellBase>(cell);
         if (!current_cell) {
-            std::cout << "XXXX Exit 1" << std::endl;
             return false;
         }
 
@@ -284,7 +270,6 @@ ov::pass::SequenceFusion::SequenceFusion() {
         for (const auto& target : cell->get_output_target_inputs(0)) {
             auto cell_1 = dynamic_pointer_cast<RNNCellBase>(target.get_node()->shared_from_this());
             if (cell_1 && is_equal_cells(cell_1, current_cell)) {
-                std::cout << "XXXX Exit 2" << std::endl;
                 return false;
             }
         }
@@ -312,7 +297,6 @@ ov::pass::SequenceFusion::SequenceFusion() {
         // investigate optimal cnt of cells
         int optimal_cnt_of_cells = 2;
         if (cells_cnt < optimal_cnt_of_cells) {
-            std::cout << "XXXX Exit 3" << std::endl;
             return false;
         }
 
@@ -327,10 +311,9 @@ ov::pass::SequenceFusion::SequenceFusion() {
                                    axis_0,
                                    axis_1);
         if (!res) {
-            std::cout << "XXXX Exit 4" << std::endl;
             return false;
         }
-        // copy_runtime_info(copy_from.get(), copy_to.get());
+        copy_runtime_info(copy_from.get(), copy_to.get());
         return true;
     };
 
