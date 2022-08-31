@@ -10,6 +10,7 @@
 #include "itt.hpp"
 #include "ngraph_ops/augru_cell.hpp"
 #include "ngraph_ops/augru_sequence.hpp"
+#include "node_register.hpp"
 
 using namespace std;
 using namespace ov;
@@ -49,10 +50,9 @@ bool check_WRB(const shared_ptr<RNNCellBase>& cell_1, const shared_ptr<RNNCellBa
     auto rW = cell_2->input_value(idx_W).get_node_shared_ptr();
     auto rR = cell_2->input_value(idx_R).get_node_shared_ptr();
     auto rB = cell_2->input_value(idx_B).get_node_shared_ptr();
-    bool is_equal = lW.get() == rW.get() && lR.get() == rR.get() && lB.get() == rB.get();
-    if (!is_equal) {
-        is_equal = is_equal_consts(lW, rW) && is_equal_consts(lR, rR) && is_equal_consts(lB, rB);
-    }
+    bool is_equal = lW.get() == rW.get() || is_equal_consts(lW, rW);
+    is_equal &= lR.get() == rR.get() || is_equal_consts(lR, rR);
+    is_equal &= lB.get() == rB.get() || is_equal_consts(lB, rB);
     return is_equal;
 }
 
