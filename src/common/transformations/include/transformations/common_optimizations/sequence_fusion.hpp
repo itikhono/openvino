@@ -21,6 +21,10 @@ class TRANSFORMATIONS_API SequenceFusion;
  * @ingroup ie_transformation_common_api
  * @brief SequenceFusion transformation replaces a chain of GRUCell
  * operations with single GRUSequence op.
+ *
+ * Supported cells: GRUCell, LSTMCell, RNNCell, AUGRUCell
+ * Limitations: the source of W,R,B inputs must be the same or
+ * it can be different Constants with the same type, shape and value.
  */
 
 class ov::pass::SequenceFusion : public ov::pass::MatcherPass {
