@@ -5,17 +5,20 @@
 #include "transformations/common_optimizations/sequence_fusion.hpp"
 
 #include <memory>
-#include <openvino/opsets/opset9.hpp>
 
 #include "itt.hpp"
 #include "ngraph_ops/augru_cell.hpp"
 #include "ngraph_ops/augru_sequence.hpp"
 #include "node_register.hpp"
+#include "openvino/core/rt_info.hpp"
+#include "openvino/opsets/opset9.hpp"
+#include "openvino/pass/pattern/op/wrap_type.hpp"
+#include "transformations/utils/utils.hpp"
 
 using namespace std;
 using namespace ov;
-using namespace opset9;
-using namespace pass::pattern;
+using namespace ov::element;
+using namespace ov::opset9;
 using namespace ov::op::util;
 
 namespace {
@@ -34,14 +37,14 @@ bool is_equal_consts(const shared_ptr<Node>& l, const shared_ptr<Node>& r) {
 
 bool check_WRB(const shared_ptr<RNNCellBase>& cell_1, const shared_ptr<RNNCellBase>& cell_2) {
     int64_t idx_W = 2, idx_R = 3, idx_B = 4;
+
     auto lstm_cell_1 = dynamic_pointer_cast<LSTMCell>(cell_1);
     auto lstm_cell_2 = dynamic_pointer_cast<LSTMCell>(cell_2);
-
     // 2nd input is Cell State
     if (lstm_cell_1 && lstm_cell_2) {
-        idx_B++;
-        idx_R++;
-        idx_W++;
+        ++idx_B;
+        ++idx_R;
+        ++idx_W;
     }
 
     auto lW = cell_1->input_value(idx_W).get_node_shared_ptr();
@@ -50,24 +53,25 @@ bool check_WRB(const shared_ptr<RNNCellBase>& cell_1, const shared_ptr<RNNCellBa
     auto rW = cell_2->input_value(idx_W).get_node_shared_ptr();
     auto rR = cell_2->input_value(idx_R).get_node_shared_ptr();
     auto rB = cell_2->input_value(idx_B).get_node_shared_ptr();
-    bool is_equal = lW.get() == rW.get() || is_equal_consts(lW, rW);
-    is_equal &= lR.get() == rR.get() || is_equal_consts(lR, rR);
-    is_equal &= lB.get() == rB.get() || is_equal_consts(lB, rB);
+    bool is_equal = (lW.get() == rW.get() || is_equal_consts(lW, rW));
+    is_equal = is_equal && (lR.get() == rR.get() || is_equal_consts(lR, rR));
+    is_equal = is_equal && (lB.get() == rB.get() || is_equal_consts(lB, rB));
     return is_equal;
 }
 
 bool is_equal_cells(const shared_ptr<RNNCellBase>& cell_1, const shared_ptr<RNNCellBase>& cell_2) {
-    bool is_equal =
-        cell_1->get_type_name() == cell_2->get_type_name() && cell_1->get_hidden_size() == cell_2->get_hidden_size() &&
-        cell_1->get_activations() == cell_2->get_activations() &&
-        cell_1->get_activations_alpha() == cell_2->get_activations_alpha() &&
-        cell_1->get_activations_beta() == cell_2->get_activations_beta() && cell_1->get_clip() == cell_2->get_clip();
-    is_equal &= check_WRB(cell_1, cell_2);
+    bool is_equal = true;
     auto gru_cell_1 = dynamic_pointer_cast<GRUCell>(cell_1);
     auto gru_cell_2 = dynamic_pointer_cast<GRUCell>(cell_2);
     if (gru_cell_1 && gru_cell_2) {
-        is_equal &= gru_cell_1->get_linear_before_reset() == gru_cell_2->get_linear_before_reset();
+        is_equal = gru_cell_1->get_linear_before_reset() == gru_cell_2->get_linear_before_reset();
     }
+    is_equal = is_equal && cell_1->get_type_name() == cell_2->get_type_name() &&
+               cell_1->get_hidden_size() == cell_2->get_hidden_size() &&
+               cell_1->get_activations() == cell_2->get_activations() &&
+               cell_1->get_activations_alpha() == cell_2->get_activations_alpha() &&
+               cell_1->get_activations_beta() == cell_2->get_activations_beta() &&
+               cell_1->get_clip() == cell_2->get_clip() && check_WRB(cell_1, cell_2);
     return is_equal;
 }
 
@@ -76,11 +80,11 @@ shared_ptr<RNNCellBase> find_cell_chain(ov::pass::NodeRegister& cp_from,
                                         const shared_ptr<RNNCellBase>& current_cell,
                                         OutputVector& x_to_concat,
                                         OutputVector& attention_to_concat,
-                                        map<int, set<ov::Input<Node>>>& h_inputs_to_redirect,
-                                        map<int, set<ov::Input<Node>>>& c_inputs_to_redirect,
+                                        map<int, set<Input<Node>>>& h_inputs_to_redirect,
+                                        map<int, set<Input<Node>>>& c_inputs_to_redirect,
                                         int& cells_cnt,
                                         const shared_ptr<Node>& axis_1) {
-    cells_cnt++;
+    cells_cnt = 1;
 
     shared_ptr<RNNCellBase> current = current_cell;
     while (true) {
@@ -139,8 +143,8 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
                      const shared_ptr<RNNCellBase>& last_cell,
                      const OutputVector& x_to_concat,
                      const OutputVector& attention_to_concat,
-                     const map<int, set<ov::Input<Node>>>& h_inputs_to_redirect,
-                     const map<int, set<ov::Input<Node>>>& c_inputs_to_redirect,
+                     const map<int, set<Input<Node>>>& h_inputs_to_redirect,
+                     const map<int, set<Input<Node>>>& c_inputs_to_redirect,
                      int cells_cnt,
                      const shared_ptr<Node>& axis_0,
                      const shared_ptr<Node>& axis_1) {
@@ -160,9 +164,9 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
     const auto B_in = cp_to.make<Unsqueeze>(first_cell->input_value(idx_B), axis_0);
 
     const auto& shape_node = cp_to.add(ngraph::op::util::make_try_fold<ShapeOf>(first_cell->input_value(0)));
-    const auto& zero = cp_to.make<Constant>(ov::element::i64, Shape{1}, 0);
+    const auto& zero = cp_to.make<Constant>(i64, Shape{1}, 0);
     const auto& batch_dimension = cp_to.add(ngraph::op::util::make_try_fold<Gather>(shape_node, zero, axis_0));
-    auto seq_lengths_scalar = cp_to.make<Constant>(element::i64, Shape{}, cells_cnt);
+    auto seq_lengths_scalar = cp_to.make<Constant>(i64, Shape{}, cells_cnt);
     auto sequence_lengths_in =
         cp_to.add(ngraph::op::util::make_try_fold<Broadcast>(seq_lengths_scalar, batch_dimension));
 
@@ -254,8 +258,8 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
 ov::pass::SequenceFusion::SequenceFusion() {
     MATCHER_SCOPE(SequenceFusion);
 
-    auto cell = wrap_type<RNNCellBase>();
-    ov::matcher_pass_callback callback = [=](pattern::Matcher& m) {
+    auto cell = pattern::wrap_type<RNNCellBase>();
+    matcher_pass_callback callback = [=](pattern::Matcher& m) {
         NodeRegister copy_from;
         NodeRegister copy_to;
         auto cell = m.get_match_root();
@@ -274,13 +278,13 @@ ov::pass::SequenceFusion::SequenceFusion() {
             }
         }
 
-        int cells_cnt = 0;
+        int cells_cnt;
         OutputVector x_to_concat;
         OutputVector attention_to_concat;
-        map<int, set<ov::Input<Node>>> h_inputs_to_redirect;
-        map<int, set<ov::Input<Node>>> c_inputs_to_redirect;
-        auto axis_0 = copy_to.make<Constant>(element::i64, Shape{}, 0);
-        auto axis_1 = copy_to.make<Constant>(element::i64, Shape{}, 1);
+        map<int, set<Input<Node>>> h_inputs_to_redirect;
+        map<int, set<Input<Node>>> c_inputs_to_redirect;
+        auto axis_0 = copy_to.make<Constant>(i64, Shape{}, 0);
+        auto axis_1 = copy_to.make<Constant>(i64, Shape{}, 1);
 
         // detect chain (Cell->Cell->Cell->..)
         auto first_cell = find_cell_chain(copy_from,
@@ -294,8 +298,8 @@ ov::pass::SequenceFusion::SequenceFusion() {
                                           axis_1);
 
         // no reasons to create sequence if the single cell detected.
-        // investigate optimal cnt of cells
-        int optimal_cnt_of_cells = 2;
+        // TODO: investigate optimal cnt of cells
+        constexpr int optimal_cnt_of_cells = 2;
         if (cells_cnt < optimal_cnt_of_cells) {
             return false;
         }
@@ -317,6 +321,6 @@ ov::pass::SequenceFusion::SequenceFusion() {
         return true;
     };
 
-    auto m = make_shared<Matcher>(cell, matcher_name);
+    auto m = make_shared<pattern::Matcher>(cell, matcher_name);
     this->register_matcher(m, callback);
 }
