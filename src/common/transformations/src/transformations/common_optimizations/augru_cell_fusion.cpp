@@ -81,7 +81,7 @@ ov::pass::AUGRUCellFusion::AUGRUCellFusion() {
         auto Rzrh = rg.make<Concat>(OutputVector{split_WRzr->output(1), split_WRh->output(1)}, 0);
 
         auto squeeze_B = rg.make<Squeeze>(B, axis_0);
-        auto cell = rg.make<op::internal::AUGRUCell>(X, H, Wzrh, Rzrh, squeeze_B, A, H.get_shape()[1]);
+        auto cell = rg.make<op::internal::AUGRUCell>(X, H, Wzrh, Rzrh, squeeze_B, A, H.get_partial_shape()[1].get_length());
 
         NodeVector new_nodes;
         new_nodes.insert(new_nodes.end(),

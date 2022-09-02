@@ -92,7 +92,6 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
 
     ngraph::pass::Manager manager(get_pass_config());
     manager.set_per_pass_validation(false);
-
     manager.register_pass<ngraph::pass::InitNodeInfo>();
     if (m_low_precision_enabled) {
         manager.register_pass<ngraph::pass::DisableConvertConstantFoldingOnConstPath>(
@@ -112,10 +111,6 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     manager.register_pass<ov::pass::Validate>();
     manager.register_pass<ov::pass::EliminateDublicatedSubgraphOpInputs>();
     manager.register_pass<ov::pass::RemoveMultiSubGraphOpDanglingParams>();
-    manager.register_pass<ov::pass::GRUCellFusion>();
-    manager.register_pass<ov::pass::AUGRUCellFusion>();
-    manager.register_pass<ngraph::pass::ConstantFolding>();
-    manager.register_pass<ov::pass::SequenceFusion>();
 
     manager.register_pass<ov::pass::FoldSubgraphEmptyInputs>();
     manager.register_pass<ngraph::pass::DisableRandomUniformConstantFolding>();
@@ -189,6 +184,8 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     common_fusions->add_matcher<ngraph::pass::PReluFusion>();
     common_fusions->add_matcher<ngraph::pass::DepthToSpaceFusion>();
     common_fusions->add_matcher<ngraph::pass::ShuffleChannelsFusion>(!m_use_shapes);
+    common_fusions->add_matcher<ov::pass::GRUCellFusion>();
+    common_fusions->add_matcher<ov::pass::AUGRUCellFusion>();
     common_fusions->set_name("ngraph::pass::CommonFusions");
 
     manager.register_pass<ngraph::pass::BinarizeWeights>();
@@ -200,7 +197,7 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     decomp->add_matcher<ngraph::pass::ConvertNegative>();
 
     manager.register_pass<ngraph::pass::LinOpSequenceFusion>();
-
+    manager.register_pass<ngraph::pass::ConstantFolding>();
     auto multiply_fusions = manager.register_pass<ngraph::pass::GraphRewrite>();
     multiply_fusions->add_matcher<ngraph::pass::ConvolutionMultiplyFusion>();
     multiply_fusions->add_matcher<ngraph::pass::GroupConvolutionMultiplyFusion>();
@@ -211,6 +208,7 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     multiply_fusions->add_matcher<ngraph::pass::MultiplyConvolutionBackpropDataFusion>();
     multiply_fusions->add_matcher<ngraph::pass::MultiplyGroupConvolutionBackpropDataFusion>();
     multiply_fusions->add_matcher<ngraph::pass::MatMulMultiplyFusion>();
+    multiply_fusions->add_matcher<ov::pass::SequenceFusion>();
     multiply_fusions->set_name("ngraph::pass::MultiplyFusions");
     manager.register_pass<ngraph::pass::ConstantFolding>();
 
@@ -229,12 +227,18 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
 
     manager.register_pass<ngraph::pass::ConstantFolding>();
     manager.run_passes(f);
-    /*int id = 0;
-    ov::pass::Manager m;
-    m.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/dien_NEW.xml",
-                                         "/home/itikhono/OpenVINO/tmp/dien_serialized/dien_NEW.bin");
-    id++;
-    m.run_passes(f);*/
+/*    int id = 0;
+    for (const auto& it : f->get_ordered_ops()) {
+        if (auto ti = std::dynamic_pointer_cast<opset8::TensorIterator>(it)) {
+            auto body = ti->get_body();
+            ov::pass::Manager m;
+            m.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/TI_orig" + std::to_string(id) + ".xml",
+                                                 "/home/itikhono/OpenVINO/tmp/dien_serialized/TI_orig" + std::to_string(id) + ".bin");
+            id++;
+            m.run_passes(body);
+        }
+
+    }*/
     if (!m_use_shapes) {
         // Restore original shapes to the nGraph Function
         for (auto&& param : f->get_parameters()) {

@@ -107,7 +107,6 @@ ov::pass::EliminateDublicatedSubgraphOpInputs::EliminateDublicatedSubgraphOpInpu
             }
         }
         new_ti->validate_and_infer_types();
-        new_ti->set_friendly_name("XXXXX TI XXXXX");
 
         copy_runtime_info(subgraph_op, new_ti);
         replace_node(subgraph_op, new_ti);
