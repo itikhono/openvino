@@ -141,6 +141,10 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     manager.register_pass<ngraph::pass::StridedSliceOptimization>(m_use_shapes);
 
     manager.register_pass<ngraph::pass::BroadcastElementwiseFusion>();
+    manager.register_pass<ov::pass::GRUCellFusion>();
+    manager.register_pass<ov::pass::AUGRUCellFusion>();
+    manager.register_pass<ngraph::pass::ConstantFolding>();
+    manager.register_pass<ov::pass::SequenceFusion>();
 
     auto transpose_sinking = manager.register_pass<ngraph::pass::GraphRewrite>();
     transpose_sinking->add_matcher<ngraph::pass::TransposeSinking>();
@@ -148,12 +152,12 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     // because it replaces pattern that may contain Transposes which must be optimized before
     // the transformation and it also inserts Transpose that can be optimized by TransposeSinking
     transpose_sinking->add_matcher<ngraph::pass::SplitSqueezeConcatFusion>();
-
     auto eliminations = manager.register_pass<ngraph::pass::GraphRewrite>();
     eliminations->add_matcher<ngraph::pass::EliminateUnsqueezeGather>();
     eliminations->add_matcher<ngraph::pass::NopElimination>(m_use_shapes /* do not use shape for elimination */);
     eliminations->set_name("ngraph::pass::CommonEliminations");
-
+    manager.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/dien_split_concat.xml",
+                                               "/home/itikhono/OpenVINO/tmp/dien_serialized/dien_split_concat.bin");
     manager.register_pass<ngraph::pass::ConstantFolding>();
 
     auto common_fusions = manager.register_pass<ngraph::pass::GraphRewrite>();
@@ -184,8 +188,6 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     common_fusions->add_matcher<ngraph::pass::PReluFusion>();
     common_fusions->add_matcher<ngraph::pass::DepthToSpaceFusion>();
     common_fusions->add_matcher<ngraph::pass::ShuffleChannelsFusion>(!m_use_shapes);
-    common_fusions->add_matcher<ov::pass::GRUCellFusion>();
-    common_fusions->add_matcher<ov::pass::AUGRUCellFusion>();
     common_fusions->set_name("ngraph::pass::CommonFusions");
 
     manager.register_pass<ngraph::pass::BinarizeWeights>();
@@ -208,7 +210,6 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     multiply_fusions->add_matcher<ngraph::pass::MultiplyConvolutionBackpropDataFusion>();
     multiply_fusions->add_matcher<ngraph::pass::MultiplyGroupConvolutionBackpropDataFusion>();
     multiply_fusions->add_matcher<ngraph::pass::MatMulMultiplyFusion>();
-    multiply_fusions->add_matcher<ov::pass::SequenceFusion>();
     multiply_fusions->set_name("ngraph::pass::MultiplyFusions");
     manager.register_pass<ngraph::pass::ConstantFolding>();
 
@@ -227,18 +228,18 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
 
     manager.register_pass<ngraph::pass::ConstantFolding>();
     manager.run_passes(f);
-/*    int id = 0;
-    for (const auto& it : f->get_ordered_ops()) {
-        if (auto ti = std::dynamic_pointer_cast<opset8::TensorIterator>(it)) {
-            auto body = ti->get_body();
-            ov::pass::Manager m;
-            m.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/TI_orig" + std::to_string(id) + ".xml",
-                                                 "/home/itikhono/OpenVINO/tmp/dien_serialized/TI_orig" + std::to_string(id) + ".bin");
-            id++;
-            m.run_passes(body);
-        }
+    /*    int id = 0;
+        for (const auto& it : f->get_ordered_ops()) {
+            if (auto ti = std::dynamic_pointer_cast<opset8::TensorIterator>(it)) {
+                auto body = ti->get_body();
+                ov::pass::Manager m;
+                m.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/TI_orig" +
+       std::to_string(id) + ".xml",
+                                                     "/home/itikhono/OpenVINO/tmp/dien_serialized/TI_orig" +
+       std::to_string(id) + ".bin"); id++; m.run_passes(body);
+            }
 
-    }*/
+        }*/
     if (!m_use_shapes) {
         // Restore original shapes to the nGraph Function
         for (auto&& param : f->get_parameters()) {

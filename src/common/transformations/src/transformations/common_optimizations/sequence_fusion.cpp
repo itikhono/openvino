@@ -100,11 +100,11 @@ shared_ptr<RNNCellBase> find_cell_chain(ov::pass::NodeRegister& cp_from,
             x_to_concat.push_back(cp_to.make<Unsqueeze>(in_X.get_source_output(), axis_1));
 
             // collect inputs (target_inputs) connected to H output of prev_node except H input of the current node
-            auto in_H = current->input(1);
-            for (const auto& input : prev_cell->get_output_target_inputs(0)) {
-                if (input != in_H) {
-                    h_inputs_to_redirect[cells_cnt].insert(input);
-                }
+            // auto in_H = current->input(1);
+            for (const auto& input : current->get_output_target_inputs(0)) {
+                // if (input != in_H) {
+                h_inputs_to_redirect[cells_cnt].insert(input);
+                //}
             }
 
             if (auto lstm = dynamic_pointer_cast<LSTMCell>(current)) {
@@ -128,6 +128,11 @@ shared_ptr<RNNCellBase> find_cell_chain(ov::pass::NodeRegister& cp_from,
             x_to_concat.push_back(cp_to.make<Unsqueeze>(in_X.get_source_output(), axis_1));
             if (auto augru = dynamic_pointer_cast<ov::op::internal::AUGRUCell>(current)) {
                 attention_to_concat.push_back(cp_to.make<Unsqueeze>(augru->input_value(5), axis_1));
+            }
+            for (const auto& input : current->get_output_target_inputs(0)) {
+                // if (input != in_H) {
+                h_inputs_to_redirect[cells_cnt].insert(input);
+                //}
             }
             break;
         }
@@ -237,8 +242,8 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
         return false;
     }
 
-    outputs[0] = cp_to.make<Squeeze>(sequence->output(1), axis_1);
-    replace_outputs_update_names(last_cell->outputs(), outputs);
+    // outputs[0] = cp_to.make<Squeeze>(sequence->output(1), axis_1);
+    // replace_outputs_update_names(last_cell->outputs(), outputs);
 
     if (!h_inputs_to_redirect.empty()) {
         auto squeeze_Y = cp_to.make<Squeeze>(sequence->output(0), axis_1);
@@ -246,7 +251,7 @@ bool create_sequence(ov::pass::NodeRegister& cp_to,
 
         for (const auto& it : h_inputs_to_redirect) {
             for (const auto& in : it.second) {
-                auto squeeze = cp_to.make<Squeeze>(split->output(cells_cnt - it.first - 1), axis_1);
+                auto squeeze = cp_to.make<Squeeze>(split->output(cells_cnt - it.first), axis_1);
                 in.replace_source_output(squeeze);
             }
         }
@@ -317,7 +322,7 @@ ov::pass::SequenceFusion::SequenceFusion() {
         if (!res) {
             return false;
         }
-        copy_runtime_info(copy_from.get(), copy_to.get());
+        // copy_runtime_info(copy_from.get(), copy_to.get());
         return true;
     };
 

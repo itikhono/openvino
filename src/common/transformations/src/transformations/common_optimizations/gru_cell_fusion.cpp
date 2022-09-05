@@ -108,7 +108,7 @@ ov::pass::GRUCellFusion::GRUCellFusion() {
         auto cell = rg.make<GRUCell>(X, H, Wzrh, Rzrh, squeeze_B, hidden_size, vector<string>{act_name_1, act_name_2});
 
         cell->set_friendly_name(m.get_match_root()->get_friendly_name());
-        copy_runtime_info(m.get_matched_nodes(), rg.get());
+        // copy_runtime_info(m.get_matched_nodes(), rg.get());
         replace_node(m.get_match_root(), cell);
         return true;
     };

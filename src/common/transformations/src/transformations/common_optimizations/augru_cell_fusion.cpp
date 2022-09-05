@@ -81,13 +81,14 @@ ov::pass::AUGRUCellFusion::AUGRUCellFusion() {
         auto Rzrh = rg.make<Concat>(OutputVector{split_WRzr->output(1), split_WRh->output(1)}, 0);
 
         auto squeeze_B = rg.make<Squeeze>(B, axis_0);
-        auto cell = rg.make<op::internal::AUGRUCell>(X, H, Wzrh, Rzrh, squeeze_B, A, H.get_partial_shape()[1].get_length());
+        auto cell =
+            rg.make<op::internal::AUGRUCell>(X, H, Wzrh, Rzrh, squeeze_B, A, H.get_partial_shape()[1].get_length());
 
         NodeVector new_nodes;
         new_nodes.insert(new_nodes.end(),
                          {axis_1, axis_0, split_lenghts, split_WRzr, split_WRh, Wzrh, Rzrh, B, squeeze_B, cell});
         cell->set_friendly_name(m.get_match_root()->get_friendly_name());
-        copy_runtime_info(m.get_matched_nodes(), rg.get());
+        // copy_runtime_info(m.get_matched_nodes(), rg.get());
         replace_node(m.get_match_root(), cell);
         return true;
     };
