@@ -29,8 +29,6 @@
 #include "statistics_report.hpp"
 #include "utils.hpp"
 // clang-format on
-#include "openvino/opsets/opset9.hpp"
-#include "openvino/pass/manager.hpp"
 
 static const size_t progressBarDefaultTotalCount = 1000;
 
@@ -627,76 +625,6 @@ int main(int argc, char* argv[]) {
             // --------------------------------------------------------
             next_step();
             startTime = Time::now();
-
-            /*            std::function<void(ov::Node*)> bfs;
-                        // int id = 0;
-                        for (const auto& it : model->get_ops()) {
-                            if (std::string(it->get_type_name()) == "TensorIterator") {
-                                auto ti = std::dynamic_pointer_cast<ov::opset9::TensorIterator>(it);
-                                auto body = ti->get_body();
-                                *//*ov::pass::Manager m;
-                    m.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/ti_" +
-                    std::to_string(id) + ".xml",
-                                                         "/home/itikhono/OpenVINO/tmp/dien_serialized/ti_" +
-                    std::to_string(id) + ".bin"); id++; m.run_passes(body);*//*
-                    std::map<ov::Node*, bool> used;
-                    int cnt = 0;
-                    bfs = [&](ov::Node* nd) {
-                        used[nd] = true;
-                        std::queue<std::pair<ov::Node*, int>> q;
-                        q.push({nd, 0});
-                        std::stack<std::string> stack;
-                        while (!q.empty()) {
-                            auto cur = q.front();
-                            q.pop();
-                            std::string str;
-                            for (int i = 0; i < cur.second; ++i) {
-                                str += " ";
-                            }
-                            std::string type_name = "auto ";
-                            type_name += cur.first->get_type_name();
-                            std::transform(type_name.begin(), type_name.end(), type_name.begin(), [](unsigned char c) {
-                                return std::tolower(c);
-                            });
-                            str += type_name;
-                            str += " = ";
-                            str += "wrap_type<";
-                            str += cur.first->get_type_name();
-                            str += ">";
-                            str += "({";
-                            for (const auto& it : cur.first->input_values()) {
-                                if (used.find(it.get_node()) == used.end()) {
-                                    q.push({it.get_node(), cur.second + 1});
-                                    used[it.get_node()] = true;
-                                }
-
-                                std::string type = it.get_node()->get_type_name();
-                                std::transform(type.begin(), type.end(), type.begin(), [](unsigned char c) {
-                                    return std::tolower(c);
-                                });
-                                if (type == "constant" or type == "parameter") {
-                                    type = "any_input()";
-                                }
-                                str += type;
-                                str += ", ";
-                            }
-                            str.erase(str.size() - 2, 2);
-                            str += "});";
-                            stack.push(str);
-                        }
-                        while (!stack.empty()) {
-                            std::cout << stack.top() << std::endl;
-                            stack.pop();
-                        }
-                    };
-                    for (const auto& res : body->get_ops()) {
-                        cnt = 0;
-                        if (res->get_friendly_name() == "dien/rnn_2/gru2/while/add_1") {
-                            bfs(res.get());
-                        }
-                    }
-                }
-            }*/
             compiledModel = core.compile_model(model, device_name);
             duration_ms = get_duration_ms_till_now(startTime);
             slog::info << "Load network took " << double_to_string(duration_ms) << " ms" << slog::endl;

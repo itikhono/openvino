@@ -156,8 +156,7 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     eliminations->add_matcher<ngraph::pass::EliminateUnsqueezeGather>();
     eliminations->add_matcher<ngraph::pass::NopElimination>(m_use_shapes /* do not use shape for elimination */);
     eliminations->set_name("ngraph::pass::CommonEliminations");
-    manager.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/dien_split_concat.xml",
-                                               "/home/itikhono/OpenVINO/tmp/dien_serialized/dien_split_concat.bin");
+
     manager.register_pass<ngraph::pass::ConstantFolding>();
 
     auto common_fusions = manager.register_pass<ngraph::pass::GraphRewrite>();
@@ -199,7 +198,7 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     decomp->add_matcher<ngraph::pass::ConvertNegative>();
 
     manager.register_pass<ngraph::pass::LinOpSequenceFusion>();
-    manager.register_pass<ngraph::pass::ConstantFolding>();
+
     auto multiply_fusions = manager.register_pass<ngraph::pass::GraphRewrite>();
     multiply_fusions->add_matcher<ngraph::pass::ConvolutionMultiplyFusion>();
     multiply_fusions->add_matcher<ngraph::pass::GroupConvolutionMultiplyFusion>();
@@ -227,19 +226,9 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     manager.register_pass<ngraph::pass::AlignEltwiseInputRanks>();
 
     manager.register_pass<ngraph::pass::ConstantFolding>();
-    manager.run_passes(f);
-    /*    int id = 0;
-        for (const auto& it : f->get_ordered_ops()) {
-            if (auto ti = std::dynamic_pointer_cast<opset8::TensorIterator>(it)) {
-                auto body = ti->get_body();
-                ov::pass::Manager m;
-                m.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/TI_orig" +
-       std::to_string(id) + ".xml",
-                                                     "/home/itikhono/OpenVINO/tmp/dien_serialized/TI_orig" +
-       std::to_string(id) + ".bin"); id++; m.run_passes(body);
-            }
 
-        }*/
+    manager.run_passes(f);
+
     if (!m_use_shapes) {
         // Restore original shapes to the nGraph Function
         for (auto&& param : f->get_parameters()) {

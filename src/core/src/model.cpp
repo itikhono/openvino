@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <list>
 #include <memory>
-#include <openvino/op/gru_cell.hpp>
 #include <string>
 #include <unordered_map>
 

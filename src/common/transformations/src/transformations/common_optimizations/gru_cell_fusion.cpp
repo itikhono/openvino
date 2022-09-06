@@ -63,28 +63,37 @@ ov::pass::GRUCellFusion::GRUCellFusion() {
         auto axis_0 = rg.make<Constant>(i64, Shape{}, 0);
         auto axis_1 = rg.make<Constant>(i64, Shape{}, 1);
 
-        auto WRzr = pattern_map.at(matmul_1)->input_value(1);
+        auto WRrz = pattern_map.at(matmul_1)->input_value(1);
         auto WRh = pattern_map.at(matmul_2)->input_value(1);
 
-        auto WRzr_pshape = WRzr.get_partial_shape();
+        auto WRrz_pshape = WRrz.get_partial_shape();
         auto WRh_pshape = WRh.get_partial_shape();
-        if (WRzr_pshape.rank().is_dynamic() || WRh_pshape.rank().is_dynamic() || WRzr_pshape[1].is_dynamic() ||
+        if (WRrz_pshape.rank().is_dynamic() || WRh_pshape.rank().is_dynamic() || WRrz_pshape[1].is_dynamic() ||
             WRh_pshape[1].is_dynamic()) {
             // split dim must be static.
             return false;
         }
 
         auto split_lenghts = rg.make<Constant>(i64, Shape{2}, vector<int64_t>{input_size, hidden_size});
-        auto split_WRzr = rg.make<VariadicSplit>(WRzr, axis_1, split_lenghts);
+        auto split_WRrz = rg.make<VariadicSplit>(WRrz, axis_1, split_lenghts);
+        auto split_W_r_z = rg.make<Split>(split_WRrz->output(0), axis_0, 2);
+        auto split_R_r_z = rg.make<Split>(split_WRrz->output(1), axis_0, 2);
         auto split_WRh = rg.make<VariadicSplit>(WRh, axis_1, split_lenghts);
-        auto Wzrh = rg.make<Concat>(OutputVector{split_WRzr->output(0), split_WRh->output(0)}, 0);
-        auto Rzrh = rg.make<Concat>(OutputVector{split_WRzr->output(1), split_WRh->output(1)}, 0);
+        auto Wzrh =
+            rg.make<Concat>(OutputVector{split_W_r_z->output(1), split_W_r_z->output(0), split_WRh->output(0)}, 0);
+        auto Rzrh =
+            rg.make<Concat>(OutputVector{split_R_r_z->output(1), split_R_r_z->output(0), split_WRh->output(1)}, 0);
 
         Output<Node> bias_add_1;
+        OutputVector bias_to_concat;
         if (pattern_map.find(add_1) != pattern_map.end()) {
             bias_add_1 = pattern_map[add_1]->input_value(1);
+            auto split_bias_r_z = rg.make<Split>(bias_add_1, axis_1, 2);
+            bias_to_concat.push_back(split_bias_r_z->output(1));
+            bias_to_concat.push_back(split_bias_r_z->output(0));
         } else {
-            bias_add_1 = rg.make<Constant>(WRzr.get_element_type(), Shape{1, static_cast<size_t>(2 * hidden_size)}, 0);
+            bias_add_1 = rg.make<Constant>(WRrz.get_element_type(), Shape{1, static_cast<size_t>(2 * hidden_size)}, 0);
+            bias_to_concat.push_back(bias_add_1);
         }
 
         Output<Node> bias_add_2;
@@ -94,7 +103,8 @@ ov::pass::GRUCellFusion::GRUCellFusion() {
             bias_add_2 = rg.make<Constant>(WRh.get_element_type(), Shape{1, static_cast<size_t>(hidden_size)}, 0);
         }
 
-        auto B = rg.make<Concat>(OutputVector{bias_add_1, bias_add_2}, 1);
+        bias_to_concat.push_back(bias_add_2);
+        auto B = rg.make<Concat>(bias_to_concat, 1);
         auto squeeze_B = rg.make<Squeeze>(B, axis_0);
 
         string act_name_1 = pattern_map.at(activation_1)->get_type_name();
@@ -108,7 +118,7 @@ ov::pass::GRUCellFusion::GRUCellFusion() {
         auto cell = rg.make<GRUCell>(X, H, Wzrh, Rzrh, squeeze_B, hidden_size, vector<string>{act_name_1, act_name_2});
 
         cell->set_friendly_name(m.get_match_root()->get_friendly_name());
-        // copy_runtime_info(m.get_matched_nodes(), rg.get());
+        copy_runtime_info(m.get_matched_nodes(), rg.get());
         replace_node(m.get_match_root(), cell);
         return true;
     };

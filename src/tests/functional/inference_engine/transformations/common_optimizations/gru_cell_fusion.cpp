@@ -72,30 +72,42 @@ shared_ptr<Model> gen_reference(const string& activation_1, const string& activa
                                     size_t input_size, bool use_bias_add_1, bool use_bias_add_2) {
     auto X = make_shared<Parameter>(f32, Shape{batch, input_size});
     auto H = make_shared<Parameter>(f32, Shape{batch, hidden_size});
-    auto WRzr = make_shared<Parameter>(f32, Shape{2 * hidden_size, input_size + hidden_size});
+    auto WRrz = make_shared<Parameter>(f32, Shape{2 * hidden_size, input_size + hidden_size});
     auto WRh = make_shared<Parameter>(f32, Shape{hidden_size, input_size + hidden_size});
-    ParameterVector params = {X, H, WRzr, WRh};
+    ParameterVector params = {X, H, WRrz, WRh};
+    auto axis_0 = make_shared<Constant>(i64, Shape{}, 0);
+    auto axis_1 = make_shared<Constant>(i64, Shape{}, 1);
 
-    shared_ptr<Node> Bzr = make_shared<Constant>(f32, Shape{1, 2 * hidden_size}, 0);
+    shared_ptr<Node> Brz = make_shared<Constant>(f32, Shape{1, 2 * hidden_size}, 0);
+    OutputVector bias_to_concat;
     if (use_bias_add_1) {
-        Bzr = make_shared<Parameter>(f32, Shape{1, 2 * hidden_size});
-        params.push_back(dynamic_pointer_cast<Parameter>(Bzr));
+        Brz = make_shared<Parameter>(f32, Shape{1, 2 * hidden_size});
+        params.push_back(dynamic_pointer_cast<Parameter>(Brz));
+        auto split_bias_r_z = make_shared<Split>(Brz, axis_1, 2);
+        bias_to_concat.push_back(split_bias_r_z->output(1));
+        bias_to_concat.push_back(split_bias_r_z->output(0));
+    } else {
+        bias_to_concat.push_back(Brz);
     }
+
     shared_ptr<Node> Bh = make_shared<Constant>(f32, Shape{1, hidden_size}, 0);
     if (use_bias_add_2) {
         Bh = make_shared<Parameter>(f32, Shape{1, hidden_size});
         params.push_back(dynamic_pointer_cast<Parameter>(Bh));
     }
 
-    auto axis_0 = make_shared<Constant>(i64, Shape{}, 0);
-    auto axis_1 = make_shared<Constant>(i64, Shape{}, 1);
     auto split_lenghts = make_shared<Constant>(i64, Shape{2}, vector<size_t>{input_size, hidden_size});
-    auto split_WRzr = make_shared<VariadicSplit>(WRzr, axis_1, split_lenghts);
+    auto split_WRrz = make_shared<VariadicSplit>(WRrz, axis_1, split_lenghts);
+    auto split_W_r_z = make_shared<Split>(split_WRrz->output(0), axis_0, 2);
+    auto split_R_r_z = make_shared<Split>(split_WRrz->output(1), axis_0, 2);
     auto split_WRh = make_shared<VariadicSplit>(WRh, axis_1, split_lenghts);
-    auto Wzrh = make_shared<Concat>(OutputVector{split_WRzr->output(0), split_WRh->output(0)}, 0);
-    auto Rzrh = make_shared<Concat>(OutputVector{split_WRzr->output(1), split_WRh->output(1)}, 0);
+    auto Wzrh =
+            make_shared<Concat>(OutputVector{split_W_r_z->output(1), split_W_r_z->output(0), split_WRh->output(0)}, 0);
+    auto Rzrh =
+            make_shared<Concat>(OutputVector{split_R_r_z->output(1), split_R_r_z->output(0), split_WRh->output(1)}, 0);
 
-    auto B = make_shared<Concat>(OutputVector{Bzr, Bh}, 1);
+    bias_to_concat.push_back(Bh);
+    auto B = make_shared<Concat>(bias_to_concat, 1);
 
     auto squeeze_B = make_shared<Squeeze>(B, axis_0);
     auto cell = make_shared<GRUCell>(X, H, Wzrh, Rzrh, squeeze_B, hidden_size, vector<string>{activation_1, activation_2});
