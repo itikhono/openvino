@@ -50,6 +50,7 @@ std::shared_ptr<ov::opset8::Transpose> make_transpose(const ov::Output<ov::Node>
                                                       const ov::AxisVector& input_order) {
     auto order = std::make_shared<ov::opset8::Constant>(element::i64, Shape{input_order.size()}, input_order);
     auto transpose = std::make_shared<ov::opset8::Transpose>(arg, order);
+    transpose->set_friendly_name("transpose_x");
     return transpose;
 }
 

@@ -32,6 +32,28 @@ TEST(TransposeSinkingTest, PassProperty) {
     ASSERT_FALSE(pass->get_property(ov::pass::PassProperty::CHANGE_DYNAMIC_STATE));
 }
 
+TEST(TransposeSinkingTest, TensorNames) {
+    ngraph::Shape shape_nhwc{16, 28, 28, 1};
+    auto a = make_shared<Parameter>(ngraph::element::i32, shape_nhwc);
+    auto ng_order = std::make_shared<Constant>(ngraph::element::u64, ngraph::Shape{4}, ngraph::Shape{0, 3, 1, 2});
+    //auto transpose = make_shared<Transpose>(a, ng_order);
+    auto absn = make_shared<Abs>(a);
+    auto absn2 = make_shared<Abs>(absn);
+    auto res = make_shared<Result>(absn2);
+    absn2->output(0).set_names({"out_name"});
+    auto func = make_shared<ngraph::Function>(ngraph::OutputVector{res}, ngraph::ParameterVector{a});
+
+    ov::pass::Manager pass_manager;
+    pass_manager.register_pass<TransposeSinking>();
+    pass_manager.register_pass<pass::Serialize>("/home/itikhono/OpenVINO/tmp/tensor_names.xml", "/home/itikhono/OpenVINO/tmp/tensor_names.bin");
+    pass_manager.run_passes(func);
+
+    auto new_transpose =
+            ngraph::as_type_ptr<Transpose>(func->get_results().at(0)->input_value(0).get_node_shared_ptr());
+    ASSERT_TRUE(new_transpose);
+    EXPECT_EQ(new_transpose->output(0).get_names(), std::unordered_set<std::string>({"out_names"}));
+}
+
 TEST(TransposeSinkingTest, EdgeSplitting) {
     // checks if Transpose is pushed through Abs, but stopped by
     // ReduceSum

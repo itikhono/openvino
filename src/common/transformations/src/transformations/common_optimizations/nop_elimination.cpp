@@ -576,13 +576,16 @@ shared_ptr<T> check_all_inputs(const shared_ptr<ov::opset9::Concat>& concat) {
         // this is also a valid case for this Elimination.
         if (!cast_to_split) {
             if (idx != (concat_in_values.size() - 1) || !split) {
+                std::cout << "XXXX special case exit8" << std::endl;
                 return {};
             }
+            std::cout << "XXXX special case" << std::endl;
             shared_ptr<Node> in_to_split = split->input_value(0).get_node_shared_ptr();
             Output<Node> seq_out;
             if (in_to_split && !in_to_split->inputs().empty()) {
                 seq_out = in_to_split->input_value(0);
             } else {
+                std::cout << "XXXX special case exit7" << std::endl;
                 return {};
             }
 
@@ -591,6 +594,7 @@ shared_ptr<T> check_all_inputs(const shared_ptr<ov::opset9::Concat>& concat) {
                 !(dynamic_pointer_cast<ov::opset9::RNNSequence>(seq_node) ||
                   dynamic_pointer_cast<ov::opset9::GRUSequence>(seq_node) ||
                   dynamic_pointer_cast<ov::opset9::LSTMSequence>(seq_node))) {
+                std::cout << "XXXX special case exit1" << std::endl;
                 return {};
             }
 
@@ -604,11 +608,13 @@ shared_ptr<T> check_all_inputs(const shared_ptr<ov::opset9::Concat>& concat) {
             }
 
             if (!valid_pattern) {
+                std::cout << "XXXX special case exit2" << std::endl;
                 return {};
             }
 
             // check that Sequence->output(1) is connected to this input or concat/split axis is not the same.
             if (!seq_node || in_to_concat != seq_node->output(1) || !check_axis(concat, split, true)) {
+                std::cout << "XXXX special case exit3" << std::endl;
                 return {};
             }
             return split;
@@ -618,12 +624,14 @@ shared_ptr<T> check_all_inputs(const shared_ptr<ov::opset9::Concat>& concat) {
             split = cast_to_split;
         } else if (cast_to_split.get() != split.get()) {
             // not all inputs to concat belong to the same Split op
+            std::cout << "XXXX special case exit4" << std::endl;
             return {};
         }
 
         // Split to Concat edges are not in orderl
         // should be (0, 1, 2, ... , split->outputs().size()-1)
         if (in_to_concat.get_index() != idx) {
+            std::cout << "XXXX special case exit5" << std::endl;
             return {};
         }
         ++idx;
@@ -631,6 +639,7 @@ shared_ptr<T> check_all_inputs(const shared_ptr<ov::opset9::Concat>& concat) {
 
     // not all split outputs are used or concat/split axis is not the same.
     if (idx != split->outputs().size() || !check_axis(concat, split)) {
+        std::cout << "XXXX special case exit6" << std::endl;
         return {};
     }
 
@@ -654,9 +663,10 @@ ov::pass::EliminateSplitConcat::EliminateSplitConcat() {
         }
 
         if (!split) {
+            std::cout << "XXXX ELIMINATE SPLIT CONCAT EXIT" << std::endl;
             return false;
         }
-
+        std::cout << "XXXX ELIMINATE SPLIT CONCAT" << std::endl;
         return replace_output_update_name(concat->output(0), split->input_value(0));
     };
 

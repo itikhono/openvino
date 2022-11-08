@@ -4,4 +4,5 @@
 try:
     import openvino.tools.mo
 except:
+    import openvino.tools.mo
     exit(1)
