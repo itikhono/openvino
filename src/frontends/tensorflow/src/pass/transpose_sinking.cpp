@@ -70,27 +70,10 @@ static shared_ptr<Reshape> make_reshape(const Output<Node>& arg, const AxisVecto
 
 static void write_transposemap(TransposeMap& reorders,
                                const Output<Node>& target,
-                               const shared_ptr<Transpose>& transpose,
-                               bool swap_names = false) {
+                               const shared_ptr<Transpose>& transpose) {
     auto name = target.get_node()->get_name() + "." + to_string(target.get_index());
     OPENVINO_DEBUG << "Write TransposeMap[" << name << "] = " << describe<Transpose>(transpose);
     reorders[name] = transpose;
-    if (swap_names) {
-        target.get_node_shared_ptr()->set_friendly_name(transpose->get_friendly_name());
-        transpose->set_friendly_name(name);
-        const auto &first_node_output_names = target.get_names();
-        const auto second_node_output_names = transpose->output(0).get_names();
-        transpose->output(0).set_names(first_node_output_names);
-        target.get_node_shared_ptr()->output(target.get_index()).set_names(second_node_output_names);
-        std::cout << "FIRST NODE NAMES" << std::endl;
-        for (const auto &name: target.get_names()) {
-            std::cout << name << std::endl;
-        }
-        std::cout << "Second NODE NAMES" << std::endl;
-        for (const auto &name: transpose->output(0).get_names()) {
-            std::cout << name << std::endl;
-        }
-    }
 }
 
 static shared_ptr<Transpose> read_transposemap(TransposeMap& reorders, const Output<Node>& target) {
@@ -114,7 +97,7 @@ static shared_ptr<Transpose> combine_transposes(const shared_ptr<Transpose>& t1,
     return combined;
 }
 
-static void insert_transpose(const shared_ptr<Node>& target, const shared_ptr<Node>& transpose, size_t input_index) {
+static shared_ptr<Transpose> insert_transpose(const shared_ptr<Node>& target, const shared_ptr<Node>& transpose, size_t input_index) {
     OPENVINO_DEBUG << "Inserting transpose at input " << target->get_name() << " input index " << input_index;
     auto arg = target->input(input_index).get_source_output();
     OPENVINO_DEBUG << "Arg shape: " << arg.get_shape();
@@ -124,6 +107,7 @@ static void insert_transpose(const shared_ptr<Node>& target, const shared_ptr<No
                    << " input index " << input_index;
 
     target->input(input_index).replace_source_output(new_transpose->output(0));
+    return new_transpose;
 }
 
 static void delete_transpose(const shared_ptr<Node>& transpose) {
@@ -189,7 +173,6 @@ static void convert_binary_to_default_order(const shared_ptr<Node>& binary,
                    << right.get_node_shared_ptr()->get_name();
     // this should now insert transpose on right
     mark_transpose_for_deletion(right_t, transposes_to_delete);
-    std::cout << "XXXXX 1" << std::endl;
     write_transposemap(reorders, binary, right_t);
 }
 
@@ -199,7 +182,6 @@ static void materialize_shapes(const shared_ptr<Node>& n,
     // For each node, create a default transpose for
     // each of the outputs and store in the map
     for (auto& it : n->outputs()) {
-        std::cout << "XXXXX 2" << std::endl;
         write_transposemap(reorders, it, create_default_transpose(it));
     }
 
@@ -213,7 +195,11 @@ static void materialize_shapes(const shared_ptr<Node>& n,
         auto arg_transpose_order = as_type_ptr<Constant>(arg_transpose->input_value(1).get_node_shared_ptr());
         if (arg_transpose_order->get_axis_vector_val() != get_default_order(arg.get_shape().size())) {
             // Insert if arg needs to be transposed.
-            insert_transpose(n, arg_transpose, i);
+            auto names = n->get_input_source_output(i).get_names();
+            n->get_input_source_output(i).set_names({});
+            auto new_transpose = insert_transpose(n, arg_transpose, i);
+            auto second_out = new_transpose->output(0);
+            second_out.set_names(names);
         }
     }
 }
@@ -232,7 +218,6 @@ static void sink_transpose(const shared_ptr<Transpose>& transpose,
     // replace transpose with combined one
     replace_node(transpose, new_transpose);
     mark_transpose_for_deletion(new_transpose, transposes_to_delete);
-    std::cout << "XXXXX 3" << std::endl;
     write_transposemap(reorders, new_transpose, new_transpose);
 }
 
@@ -241,13 +226,7 @@ static void sink_unary(const shared_ptr<Node>& n,
                        set<shared_ptr<Node>>& /* transposes_to_delete */) {
     auto arg_transpose = read_transposemap(reorders, n->input_value(0));
     OPENVINO_DEBUG << "Propagating " << describe<Transpose>(arg_transpose) << " for " << n->get_name();
-    std::cout << "XXXXX 4" << std::endl;
-    if (arg_transpose) {
-        std::cout << "XXXXX ttranspose exist in unary" << std::endl;
-    } else {
-        std::cout << "XXXXX ttranspose donesn't exists in unary" << std::endl;
-    }
-    write_transposemap(reorders, n, arg_transpose, true);
+    write_transposemap(reorders, n, arg_transpose);
 }
 
 static void sink_binary(const shared_ptr<Node>& binary,
@@ -276,7 +255,6 @@ static void sink_binary(const shared_ptr<Node>& binary,
         // Propagate the reshape which matches the shape of the binary node
         auto new_transpose = (binary->get_output_shape(0) == left.get_shape()) ? left_t : right_t;
         OPENVINO_DEBUG << "Propagating " << describe<Transpose>(new_transpose) << " for " << binary->get_name();
-        std::cout << "XXXXX 5" << std::endl;
         write_transposemap(reorders, binary, new_transpose);
         // at this point, both transposes will be eventually removed
         mark_transpose_for_deletion(left_t, transposes_to_delete);
@@ -323,7 +301,6 @@ static void sink_pad(shared_ptr<Pad> n, TransposeMap& reorders, set<shared_ptr<N
     replace_node(n, new_pad);
     auto new_transpose = make_transpose(new_pad, order);
     OPENVINO_DEBUG << "Propagating " << describe<Transpose>(new_transpose) << " for " << n->get_name();
-    std::cout << "XXXXX 6" << std::endl;
     write_transposemap(reorders, new_pad, new_transpose);
 }
 
@@ -377,7 +354,6 @@ static void sink_concat(const shared_ptr<Concat>& n,
     replace_node(n, new_concat);
     auto new_transpose = make_transpose(new_concat, order);
     OPENVINO_DEBUG << "Propagating " << describe<Transpose>(new_transpose) << " for " << n->get_name();
-    std::cout << "XXXXX 7" << std::endl;
     write_transposemap(reorders, new_concat, new_transpose);
 }
 
@@ -391,7 +367,6 @@ static void sink_prelu(const shared_ptr<PRelu>& prelu,
         // handle a case covering LeakyRelu decomposition
         auto arg_transpose = read_transposemap(reorders, prelu->input_value(0));
         OPENVINO_DEBUG << "Propagating " << describe<Transpose>(arg_transpose) << " for " << prelu->get_name();
-        std::cout << "XXXXX 8" << std::endl;
         write_transposemap(reorders, prelu, arg_transpose);
     } else {
         // TODO: handle other cases with non-scalar slope
@@ -437,16 +412,7 @@ bool ov::frontend::tensorflow::pass::TransposeSinking::run_on_model(const shared
             } else if (auto prelu = as_type_ptr<PRelu>(n)) {
                 sink_prelu(prelu, reorders, transposes_to_delete);
             } else {
-                std::cout << "XXXXX!! " << std::endl;
                 materialize_shapes(n, reorders, transposes_to_delete);
-            }
-        }
-        std::cout << "XXXXX tensor names" << std::endl;
-        for (const auto& op : f->get_ordered_ops()) {
-            auto names = op->output(0).get_names();
-            std::cout << op->get_friendly_name() << std::endl;
-            for (const auto& name : names) {
-                std::cout << name << std::endl;
             }
         }
     } catch (...) {
