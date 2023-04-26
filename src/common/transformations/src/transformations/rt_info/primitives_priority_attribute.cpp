@@ -10,7 +10,11 @@
 #include <iterator>
 #include <memory>
 #include <ngraph/node.hpp>
-#include <ngraph/opsets/opset1.hpp>
+
+#include "openvino/op/matmul.hpp"
+#include "openvino/op/group_conv.hpp"
+#include "openvino/op/convolution.hpp"
+
 #include <ostream>
 
 using namespace ov;
@@ -31,11 +35,11 @@ std::string ov::getPrimitivesPriority(const std::shared_ptr<ngraph::Node>& node)
 
 Any PrimitivesPriority::merge(const ngraph::NodeVector& nodes) const {
     auto canBeMerged = [](const std::shared_ptr<Node>& node) -> bool {
-        if (std::dynamic_pointer_cast<ngraph::opset1::Convolution>(node) ||
-            std::dynamic_pointer_cast<ngraph::opset1::GroupConvolution>(node) ||
-            std::dynamic_pointer_cast<ngraph::opset1::GroupConvolutionBackpropData>(node) ||
-            std::dynamic_pointer_cast<ngraph::opset1::ConvolutionBackpropData>(node) ||
-            std::dynamic_pointer_cast<ngraph::opset1::MatMul>(node)) {
+        if (std::dynamic_pointer_cast<ov::op::v1::Convolution>(node) ||
+            std::dynamic_pointer_cast<ov::op::v1::GroupConvolution>(node) ||
+            std::dynamic_pointer_cast<ov::op::v1::GroupConvolutionBackpropData>(node) ||
+            std::dynamic_pointer_cast<ov::op::v1::ConvolutionBackpropData>(node) ||
+            std::dynamic_pointer_cast<ov::op::v0::MatMul>(node)) {
             return true;
         }
         return false;

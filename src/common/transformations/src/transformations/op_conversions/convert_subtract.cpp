@@ -7,7 +7,10 @@
 #include <memory>
 #include <ngraph/pattern/op/wrap_type.hpp>
 #include <ngraph/rt_info.hpp>
-#include <openvino/opsets/opset1.hpp>
+#include "openvino/op/add.hpp"
+#include "openvino/op/constant.hpp"
+#include "openvino/op/subtract.hpp"
+#include "openvino/op/multiply.hpp"
 #include <vector>
 
 #include "itt.hpp"
@@ -15,10 +18,10 @@
 
 ov::pass::ConvertSubtract::ConvertSubtract() {
     MATCHER_SCOPE(ConvertSubtract);
-    auto sub = ngraph::pattern::wrap_type<ov::opset1::Subtract>();
+    auto sub = ngraph::pattern::wrap_type<ov::op::v1::Subtract>();
 
     matcher_pass_callback callback = [=](pattern::Matcher& m) {
-        auto sub = std::dynamic_pointer_cast<ov::opset1::Subtract>(m.get_match_root());
+        auto sub = std::dynamic_pointer_cast<ov::op::v1::Subtract>(m.get_match_root());
         if (!sub) {
             return false;
         }
@@ -31,11 +34,11 @@ ov::pass::ConvertSubtract::ConvertSubtract() {
             return false;
         }
 
-        auto neg = std::make_shared<ov::opset1::Multiply>(
+        auto neg = std::make_shared<ov::op::v1::Multiply>(
             sub->input(1).get_source_output(),
-            opset1::Constant::create(sub->get_input_element_type(1), Shape{}, {-1}));
+            ov::op::v0::Constant::create(sub->get_input_element_type(1), Shape{}, {-1}));
 
-        auto add = std::make_shared<ov::opset1::Add>(sub->input(0).get_source_output(), neg);
+        auto add = std::make_shared<ov::op::v1::Add>(sub->input(0).get_source_output(), neg);
 
         add->set_friendly_name(sub->get_friendly_name());
         ngraph::copy_runtime_info(sub, {neg, add});

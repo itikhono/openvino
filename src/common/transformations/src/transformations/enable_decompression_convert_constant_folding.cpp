@@ -5,7 +5,7 @@
 #include "transformations/enable_decompression_convert_constant_folding.hpp"
 
 #include "itt.hpp"
-#include "openvino/opsets/opset8.hpp"
+#include "openvino/op/convert.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "transformations/rt_info/decompression.hpp"
 #include "transformations/rt_info/disable_constant_folding.hpp"
@@ -14,7 +14,7 @@ using namespace ov;
 
 pass::EnableDecompressionConvertConstantFolding::EnableDecompressionConvertConstantFolding() {
     MATCHER_SCOPE(EnableDecompressionConvertConstantFolding);
-    auto convert = pattern::wrap_type<opset8::Convert>();
+    auto convert = pattern::wrap_type<ov::op::v0::Convert>();
 
     matcher_pass_callback callback = [=](pattern::Matcher& m) {
         const auto& node = m.get_match_root();

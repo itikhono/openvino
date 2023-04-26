@@ -5,7 +5,6 @@
 #include "transformations/init_node_info.hpp"
 
 #include <memory>
-#include <ngraph/opsets/opset1.hpp>
 #include <ngraph/rt_info.hpp>
 #include <vector>
 
@@ -13,6 +12,7 @@
 #include "transformations/fix_rt_info.hpp"
 #include "transformations/rt_info/fused_names_attribute.hpp"
 #include "transformations/rt_info/primitives_priority_attribute.hpp"
+#include "openvino/op/util/sub_graph_base.hpp"
 
 bool ov::pass::InitNodeInfo::run_on_model(const std::shared_ptr<ngraph::Function>& f) {
     RUN_ON_FUNCTION_SCOPE(InitNodeInfo);
