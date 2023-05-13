@@ -91,6 +91,7 @@
 #include <transformations/init_node_info.hpp>
 #include <transformations/rt_info/fused_names_attribute.hpp>
 #include <transformations/op_conversions/convert_shapeof3.hpp>
+#include <transformations/transpose_sinking/ts_general.hpp>
 
 #include <transformations/low_precision/mark_dequantization_subgraph.hpp>
 #include <low_precision/pull_reshape_through_dequantization.hpp>
@@ -205,7 +206,7 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
         manager.register_pass<ov::pass::CommonOptimizations>();
 
         manager.register_pass<ov::pass::WrapInterpolateIntoTransposes>();
-        manager.register_pass<ov::pass::TransposeSinking>();
+        manager.register_pass<ov::pass::TransposeSinkingGeneral>();
 
         if (!enable_loop_unrolling) {
             manager.register_pass<ov::pass::BidirectionalLSTMSequenceDecomposition>();
