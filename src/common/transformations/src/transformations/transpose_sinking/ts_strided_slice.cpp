@@ -68,19 +68,20 @@ TSStridedSliceForward::TSStridedSliceForward() {
         std::vector<std::shared_ptr<ov::op::v0::Constant>> new_inputs(3);
         for (size_t input_idx = 1; input_idx <= 3; ++input_idx) {
             auto input = strided_slice->input_value(input_idx);
-            auto input_rank = input.get_partial_shape().rank();
+            auto input_pshape = input.get_partial_shape();
 
-            if (input_rank.is_dynamic()) {
+            if (input_pshape.is_dynamic()) {
                 return false;
             }
 
+            auto num_elements = input_pshape[0].get_length();
             // if input_rank less than the unmodified_order_from,
             // then we need to extend the input rank to unmodified_order_from number
             // e.g. transpose_order = (1, 2, 0, 4, 5)
             // unmodified_order_from = 3
             // `begin` input rank = 2
             // we need to add at least one value = 0 to `begin` input to successfully execute Transpose operation
-            if (input_rank.get_length() < unmodified_order_from) {
+            if (num_elements < unmodified_order_from) {
                 auto input_const = ov::as_type_ptr<ov::op::v0::Constant>(input.get_node_shared_ptr());
                 if (!input_const) {
                     return false;
@@ -93,7 +94,7 @@ TSStridedSliceForward::TSStridedSliceForward() {
                 } else if (input_idx == 2) {
                     // 'end' input have to be initialized with the corresponding `data` input dim value
                     input_const_val.resize(unmodified_order_from);
-                    for (size_t i = (unmodified_order_from - input_rank.get_length()); i < unmodified_order_from; ++i) {
+                    for (size_t i = (unmodified_order_from - num_elements); i < unmodified_order_from; ++i) {
                         // todo: we can use int max value and delete this check
                         if (data_partial_shape[i].is_dynamic()) {
                             return false;
@@ -108,9 +109,9 @@ TSStridedSliceForward::TSStridedSliceForward() {
             }
         }
 
-        for (size_t i = 0; i < new_inputs.size(); ++i) {
-            if (new_inputs[i]) {
-                strided_slice->input(i).replace_source_output(new_inputs[i]);
+        for (size_t i = 1; i <= new_inputs.size(); ++i) {
+            if (new_inputs[i-1]) {
+                strided_slice->input(i).replace_source_output(new_inputs[i-1]);
             }
         }
 
@@ -132,8 +133,11 @@ TSStridedSliceForward::TSStridedSliceForward() {
         auto shrink_axes = convert_mask_to_axis_vec(strided_slice->get_shrink_axis_mask());
         auto new_axes = convert_mask_to_axis_vec(strided_slice->get_new_axis_mask());
 
+        // delete Transpose op on 1st input
+        utils::sink_forward::UpdateInputTransposes(main_node, transpose_info, {0});
+        auto axis = std::make_shared<ov::op::v0::Constant>(element::i32, Shape{}, 0);
+        ChangeValuesOrder(strided_slice->input_value(1), transpose_order_values, axis);
 
-        default_inputs_update(main_node, transpose_info);
         transpose_order_values = GetOrderAfterReduction(shrink_axes, transpose_order_values);
         transpose_order_values = GetOrderBeforeReduction(new_axes, transpose_order_values);
 
