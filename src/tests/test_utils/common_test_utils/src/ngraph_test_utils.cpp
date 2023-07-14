@@ -55,7 +55,10 @@ void TransformationTestsF::SetUp() {
 
 void TransformationTestsF::TearDown() {
     OPENVINO_ASSERT(function != nullptr, "Test Model is not initialized.");
-
+    ov::pass::Manager manager_before;
+    manager_before.register_pass<ov::pass::Serialize>("/home/itikhonov/OpenVINO/tmp/serialized/ts_ss_before.xml",
+                                                "/home/itikhonov/OpenVINO/tmp/serialized/ts_ss_before.bin");
+    manager_before.run_passes(function);
     std::shared_ptr<ov::Model> cloned_function;
     auto acc_enabled = comparator.should_compare(FunctionsComparator::ACCURACY);
     if (!function_ref) {
@@ -66,6 +69,16 @@ void TransformationTestsF::TearDown() {
     }
     manager.register_pass<ov::pass::CheckUniqueNames>(m_unh, m_soft_names_comparison, m_result_friendly_names_check);
     manager.run_passes(function);
+
+    ov::pass::Manager manager0;
+    manager0.register_pass<ov::pass::Serialize>("/home/itikhonov/OpenVINO/tmp/serialized/ts_ss.xml",
+                                                "/home/itikhonov/OpenVINO/tmp/serialized/ts_ss.bin");
+    manager0.run_passes(function);
+
+    ov::pass::Manager manager1;
+    manager1.register_pass<ov::pass::Serialize>("/home/itikhonov/OpenVINO/tmp/serialized/ts_ss_ref.xml",
+                                                "/home/itikhonov/OpenVINO/tmp/serialized/ts_ss_ref.bin");
+    manager1.run_passes(function_ref);
 
     if (!m_disable_rt_info_check) {
         ASSERT_NO_THROW(check_rt_info(function));

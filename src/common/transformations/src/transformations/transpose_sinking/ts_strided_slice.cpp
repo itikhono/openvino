@@ -95,14 +95,6 @@ TSStridedSliceForward::TSStridedSliceForward() {
         utils::sink_forward::UpdateInputTransposes(main_node, transpose_info, {0});
 
         auto transpose_order_values = transpose_info.transpose_const->cast_vector<size_t>();
-        auto axis = std::make_shared<ov::op::v0::Constant>(element::i32, Shape{}, 0);
-        for (size_t i = 1; i <= new_inputs.size(); ++i) {
-            if (new_inputs[i-1]) {
-                strided_slice->input(i).replace_source_output(new_inputs[i-1]);
-            }
-            main_node->input(i).replace_source_output(
-                    ChangeValuesOrder(main_node->input_value(i), transpose_order_values, axis));
-        }
 
         auto update_mask = [&](std::vector<int64_t> old_mask) {
             old_mask.resize(data_rank_val, 0);
@@ -116,7 +108,7 @@ TSStridedSliceForward::TSStridedSliceForward() {
         strided_slice->set_begin_mask(update_mask(strided_slice->get_begin_mask()));
         strided_slice->set_end_mask(update_mask(strided_slice->get_end_mask()));
         strided_slice->set_shrink_axis_mask(update_mask(strided_slice->get_shrink_axis_mask()));
-        strided_slice->set_new_axis_mask(update_mask(strided_slice->get_new_axis_mask()));
+        //strided_slice->set_new_axis_mask(update_mask(strided_slice->get_new_axis_mask()));
 
         auto shrink_axes = convert_mask_to_axis_vec(strided_slice->get_shrink_axis_mask());
         auto new_axes = convert_mask_to_axis_vec(strided_slice->get_new_axis_mask());
@@ -124,6 +116,14 @@ TSStridedSliceForward::TSStridedSliceForward() {
         transpose_order_values = GetOrderAfterReduction(shrink_axes, transpose_order_values);
         transpose_order_values = GetOrderBeforeReduction(new_axes, transpose_order_values);
 
+        auto axis = std::make_shared<ov::op::v0::Constant>(element::i32, Shape{}, 0);
+        for (size_t i = 1; i <= new_inputs.size(); ++i) {
+            if (new_inputs[i-1]) {
+                strided_slice->input(i).replace_source_output(new_inputs[i-1]);
+            }
+            main_node->input(i).replace_source_output(
+                    ChangeValuesOrder(main_node->input_value(i), transpose_order_values, axis));
+        }
         auto new_transpose_order = std::make_shared<ov::op::v0::Constant>(transpose_info.transpose_const->get_element_type(),
                                                            Shape{transpose_order_values.size()},
                                                            transpose_order_values);

@@ -363,6 +363,7 @@ TEST_P(TSTestFixture, CompareFunctions) {
     }
     comparator.enable(FunctionsComparator::CmpValues::CONST_VALUES);
     comparator.enable(FunctionsComparator::CmpValues::ATTRIBUTES);
+    comparator.enable(FunctionsComparator::CmpValues::ACCURACY);
 }
 
 shared_ptr<ov::Model> create_model(size_t main_node_idx,
