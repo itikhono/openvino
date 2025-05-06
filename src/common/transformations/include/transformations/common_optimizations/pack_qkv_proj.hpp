@@ -15,36 +15,54 @@ namespace pass {
 
 /**
  * @ingroup ov_transformation_common_api
- * @brief L2SharedInputMatMulFusion transformation identifies multiple MatMul operations
- * sharing a common L2-normalized input and fuses them into a single MatMul followed by a VariadicSplit.
+ * @brief PackQKVProj transformation detects and fuses multiple MatMul (and optional Add) operations
+ * used for unrolled Q, K, and V projections into a single packed MatMul (+ Add) per group.
  *
- * Transformation looks for the following pattern:
+ * In this case each projection looks like:
+ *     normalized_input → MatMul (per-head weight) → [optional Add (bias)]
  *
- *        input
- *          |
- *        Power(x, 2)
- *          |
- *      ReduceSum(axis)
- *          |
- *         Sqrt
- *          |
- *       Divide(x, sqrt)
- *          |
- *       Multiply(x, scale)  ← shared normalized input
- *        /     |     \
- *     MatMul  MatMul  MatMul  ← each with quantized or constant weights
+ * This transformation:
+ * - Groups nodes by prefix (q_proj, k_proj, v_proj) using name pattern
+ * - Sorts them by numerical suffix
+ * - Concatenates weights and biases
+ * - Replaces them with a single MatMul (+ optional Add) per group
  *
- * And rewrites into:
+ * ----------------------------------------------------
+ * Example: Before (unrolled projections per head)
+ * ----------------------------------------------------
  *
- *        input
- *          |
- *       L2Normalize (Power → ReduceSum → Sqrt → Divide → Mul)
- *          |
- *       MatMul (with packed weights)
- *          |
- *       VariadicSplit (splits packed output back into separate Q, K, V, ...)
+ *             input (L2 normalized)
+ *                   |
+ *          ┌────────┼────────┐
+ *          |        |        |
+ *       MatMul   MatMul   MatMul       (q_proj.0, q_proj.1, q_proj.2)
+ *          |        |        |
+ *        [Add]    [Add]    [Add]       (optional bias)
+ *          |        |        |
+ *        out0     out1     out2
  *
  *
+ * ----------------------------------------------------
+ * Example: After (fused projection per group)
+ * ----------------------------------------------------
+ *
+ *             input (L2 normalized)
+ *                   |
+ *                MatMul           (fused q_proj weights)
+ *                   |
+ *                [Add]            (fused q_proj biases if present)
+ *                   |
+ *            [q_proj output]
+ *
+ * Same logic applies to k_proj and v_proj groups.
+ *
+ * ----------------------------------------------------
+ * Requirements:
+ * ----------------------------------------------------
+ * - Node names must match: q_proj.N, k_proj.N, v_proj.N
+ * - All MatMuls in a group must share the same input
+ * - Bias (Add) is optional but must exist for all heads to be fused
+ * - Weight can be Constant or quantized: Convert → Subtract → Multiply
  */
 class TRANSFORMATIONS_API PackQKVProj;
 
@@ -53,6 +71,6 @@ class TRANSFORMATIONS_API PackQKVProj;
 
 class ov::pass::PackQKVProj : public ov::pass::MatcherPass {
 public:
-    OPENVINO_MATCHER_PASS_RTTI("L2SharedInputMatMulFusion");
+    OPENVINO_MATCHER_PASS_RTTI("PackQKVProj");
     PackQKVProj();
 };
