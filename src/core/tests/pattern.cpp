@@ -50,6 +50,7 @@
 #include "openvino/pass/pattern/op/true.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "transformations/utils/utils.hpp"
+#include "openvino/pass/pattern/op/block.hpp"
 
 using namespace ov;
 using namespace ov::pass;
@@ -1578,4 +1579,35 @@ TEST(pattern, predicate_syntactic_sugar) {
     ASSERT_NO_THROW(pattern::wrap_type<op::v0::Relu>(pattern::any_input()));
     ASSERT_NO_THROW(pattern::wrap_type<op::v0::Relu>(pattern::wrap_type<op::v0::Relu>()));
     ASSERT_NO_THROW(pattern::wrap_type<op::v0::Relu>("[-1,0,1]"));
+}
+TEST_F(PatternBlockTest, BasicMatMulAddBlock) {
+    auto input = std::make_shared<pattern::op::Label>(element::f32, PartialShape::dynamic());
+    auto weights = std::make_shared<pattern::op::Label>(element::f32, PartialShape::dynamic());
+    auto bias = std::make_shared<pattern::op::Label>(element::f32, PartialShape::dynamic());
+
+    auto matmul = std::make_shared<pattern::op::MatMul>(input, weights);
+    auto add = std::make_shared<pattern::op::Add>(matmul, bias);
+
+    auto block = std::make_shared<pattern::op::Block>(
+            std::vector<Output<Node>>{input, weights, bias}, // inputs
+            std::vector<Output<Node>>{add},                  // outputs
+            "MatMulAddBlock"
+    );
+
+    auto root = block;
+
+    ov::pass::pattern::Matcher matcher(root, "MatMulAddBlock");
+
+    auto input_node = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1, 4});
+    auto weight_node = ov::op::v0::Constant::create(element::f32, Shape{4, 4}, {0});
+    auto bias_node = ov::op::v0::Constant::create(element::f32, Shape{1, 4}, {0});
+
+    auto real_matmul = std::make_shared<ov::op::v0::MatMul>(input_node, weight_node);
+    auto real_add = std::make_shared<ov::op::v1::Add>(real_matmul, bias_node);
+
+    auto f = std::make_shared<ov::Model>(OutputVector{real_add}, ParameterVector{input_node});
+
+    ASSERT_TRUE(matcher.match(f->get_output_op(0)));
+    auto& pattern_map = matcher.get_pattern_map();
+    EXPECT_TRUE(pattern_map.count(block));  // Block itself matched
 }
