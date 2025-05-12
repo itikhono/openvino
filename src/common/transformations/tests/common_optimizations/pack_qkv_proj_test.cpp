@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "transformations/common_optimizations/pack_qkv_proj.hpp"
+#include "transformations/common_optimizations/pack_mha.hpp"
 
 #include <gtest/gtest.h>
 

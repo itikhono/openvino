@@ -51,6 +51,7 @@
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "transformations/utils/utils.hpp"
 #include "openvino/pass/pattern/op/block.hpp"
+#include "openvino/pass/pattern/multi_matcher.hpp"
 
 using namespace ov;
 using namespace ov::pass;
@@ -1580,34 +1581,222 @@ TEST(pattern, predicate_syntactic_sugar) {
     ASSERT_NO_THROW(pattern::wrap_type<op::v0::Relu>(pattern::wrap_type<op::v0::Relu>()));
     ASSERT_NO_THROW(pattern::wrap_type<op::v0::Relu>("[-1,0,1]"));
 }
-TEST_F(PatternBlockTest, BasicMatMulAddBlock) {
-    auto input = std::make_shared<pattern::op::Label>(element::f32, PartialShape::dynamic());
-    auto weights = std::make_shared<pattern::op::Label>(element::f32, PartialShape::dynamic());
-    auto bias = std::make_shared<pattern::op::Label>(element::f32, PartialShape::dynamic());
 
-    auto matmul = std::make_shared<pattern::op::MatMul>(input, weights);
-    auto add = std::make_shared<pattern::op::Add>(matmul, bias);
+TEST(PatternBlockTest, BlockMatchesSubgraphWithNamedNodes) {
+    using namespace ov::pass::pattern;
+
+    // Pattern-side graph (block definition)
+    auto input = any_input();
+    auto weights = any_input();
+
+    // Internal subgraph with wrap_type and naming
+    auto k_matmul = wrap_type<ov::op::v0::MatMul>({input, weights});
+
+    // Wrap into a Block
+    auto block = std::make_shared<pass::pattern::op::Block>(
+            OutputVector{input, weights},
+            OutputVector{k_matmul},
+            "KMatmulBlock");
+
+    // Pattern matcher using the block
+    Matcher matcher(block);
+
+    // Graph-side model
+    auto input_node = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1, 4});
+    auto weights_node = ov::op::v0::Constant::create(element::f32, Shape{4, 4}, {0});
+    auto real_matmul = std::make_shared<ov::op::v0::MatMul>(input_node, weights_node);
+
+    // Run matcher
+    ASSERT_TRUE(matcher.match(real_matmul->output(0)));
+
+    auto& pm = matcher.get_pattern_value_map();
+    ASSERT_TRUE(pm.count(block));
+
+    auto block_output = pm.at(block);
+    auto block_node = std::dynamic_pointer_cast<pattern::op::Block>(block_output.get_node_shared_ptr());
+    ASSERT_NE(block_node, nullptr);
+
+    // Validate extracted inputs
+    const auto& matched_inputs = block_node->get_inputs();
+    EXPECT_EQ(matched_inputs.size(), 2);
+
+    // IT LOOKS LIKE WE NEED TO ALIGN ORDER here
+    EXPECT_EQ(matched_inputs[0].get_node_shared_ptr(), input_node);
+    EXPECT_EQ(matched_inputs[1].get_node_shared_ptr(), weights_node);
+
+    // Validate outputs
+    const auto& matched_outputs = block_node->get_outputs();
+    ASSERT_EQ(matched_outputs.size(), 1);
+    EXPECT_EQ(matched_outputs[0].get_node_shared_ptr(), real_matmul);
+}
+
+TEST(PatternBlockTest, BlockMatchesMatMulAddChain) {
+    using namespace ov::pass::pattern;
+
+    auto input = any_input();
+    auto weights = any_input();
+    auto bias = any_input();
+
+    auto matmul = wrap_type<ov::op::v0::MatMul>({input, weights});
+    auto add = wrap_type<ov::op::v1::Add>({matmul, bias});
 
     auto block = std::make_shared<pattern::op::Block>(
-            std::vector<Output<Node>>{input, weights, bias}, // inputs
-            std::vector<Output<Node>>{add},                  // outputs
-            "MatMulAddBlock"
-    );
+            OutputVector{input, weights, bias},
+            OutputVector{add},
+            "MatMulAddBlock");
 
-    auto root = block;
+    Matcher matcher(block);
 
-    ov::pass::pattern::Matcher matcher(root, "MatMulAddBlock");
-
+    // Graph-side nodes
     auto input_node = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1, 4});
-    auto weight_node = ov::op::v0::Constant::create(element::f32, Shape{4, 4}, {0});
+    auto weights_node = ov::op::v0::Constant::create(element::f32, Shape{4, 4}, {0});
     auto bias_node = ov::op::v0::Constant::create(element::f32, Shape{1, 4}, {0});
 
-    auto real_matmul = std::make_shared<ov::op::v0::MatMul>(input_node, weight_node);
+    auto real_matmul = std::make_shared<ov::op::v0::MatMul>(input_node, weights_node);
     auto real_add = std::make_shared<ov::op::v1::Add>(real_matmul, bias_node);
 
-    auto f = std::make_shared<ov::Model>(OutputVector{real_add}, ParameterVector{input_node});
+    ASSERT_TRUE(matcher.match(real_add->output(0)));
 
-    ASSERT_TRUE(matcher.match(f->get_output_op(0)));
-    auto& pattern_map = matcher.get_pattern_map();
-    EXPECT_TRUE(pattern_map.count(block));  // Block itself matched
+    auto& pm = matcher.get_pattern_value_map();
+    auto block_node = std::dynamic_pointer_cast<pattern::op::Block>(pm.at(block).get_node_shared_ptr());
+    ASSERT_NE(block_node, nullptr);
+
+    const auto& ins = block_node->get_inputs();
+    EXPECT_EQ(ins.size(), 3);
+    EXPECT_EQ(ins[0].get_node_shared_ptr(), input_node);
+    EXPECT_EQ(ins[1].get_node_shared_ptr(), weights_node);
+    EXPECT_EQ(ins[2].get_node_shared_ptr(), bias_node);
+
+    const auto& outs = block_node->get_outputs();
+    ASSERT_EQ(outs.size(), 1);
+    EXPECT_EQ(outs[0].get_node_shared_ptr(), real_add);
+}
+
+TEST(PatternBlockTest, BlockDoesNotMatchDifferentOp) {
+    using namespace ov::pass::pattern;
+
+    auto input = any_input();
+    auto weights = any_input();
+    auto bias = any_input();
+
+    auto matmul = wrap_type<ov::op::v0::MatMul>({input, weights});
+    auto add = wrap_type<ov::op::v1::Add>({matmul, bias});
+
+    auto block = std::make_shared<pattern::op::Block>(
+            OutputVector{input, weights, bias},
+            OutputVector{add},
+            "MatMulAddBlock");
+
+    Matcher matcher(block);
+
+    // Graph contains Subtract instead of Add
+    auto input_node = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1, 4});
+    auto weights_node = ov::op::v0::Constant::create(element::f32, Shape{4, 4}, {0});
+    auto bias_node = ov::op::v0::Constant::create(element::f32, Shape{1, 4}, {0});
+
+    auto real_matmul = std::make_shared<ov::op::v0::MatMul>(input_node, weights_node);
+    auto wrong_add = std::make_shared<ov::op::v1::Subtract>(real_matmul, bias_node);
+
+    ASSERT_FALSE(matcher.match(wrong_add->output(0)));
+}
+
+TEST(PatternBlockTest, BlockDoesNotMatchIfInputIsMissing) {
+    using namespace ov::pass::pattern;
+
+    auto input = any_input();
+    auto weights = any_input();
+    auto bias = any_input();
+
+    auto matmul = wrap_type<ov::op::v0::MatMul>({input, weights});
+    auto add = wrap_type<ov::op::v1::Add>({matmul, bias});
+
+    auto block = std::make_shared<pattern::op::Block>(
+            OutputVector{input, weights, bias},
+            OutputVector{add},
+            "MatMulAddBlock");
+
+    Matcher matcher(block);
+
+    // Graph has missing bias
+    auto input_node = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{1, 4});
+    auto weights_node = ov::op::v0::Constant::create(element::f32, Shape{4, 4}, {0});
+
+    auto real_matmul = std::make_shared<ov::op::v0::MatMul>(input_node, weights_node);
+    // bias is missing
+    ASSERT_FALSE(matcher.match(real_matmul->output(0)));
+}
+
+TEST(MultiMatcherTest, MatchesMultipleMatMuls) {
+    using namespace ov::pass::pattern;
+    using namespace ov::op;
+
+    auto input1 = std::make_shared<v0::Parameter>(element::f32, Shape{1, 4});
+    auto input2 = std::make_shared<v0::Parameter>(element::f32, Shape{1, 4});
+    auto input3 = std::make_shared<v0::Parameter>(element::f32, Shape{1, 4});
+
+    auto weight1 = v0::Constant::create(element::f32, Shape{4, 4}, {0});
+    auto weight2 = v0::Constant::create(element::f32, Shape{4, 4}, {0});
+    auto weight3 = v0::Constant::create(element::f32, Shape{4, 4}, {0});
+
+    auto mm1 = std::make_shared<v0::MatMul>(input1, weight1);
+    auto mm2 = std::make_shared<v0::MatMul>(input2, weight2);
+    auto mm3 = std::make_shared<v0::MatMul>(input3, weight3);
+
+    auto model = std::make_shared<Model>(OutputVector{mm1, mm2, mm3}, ParameterVector{input1, input2, input3});
+
+    auto pat_input = any_input();
+    auto pat_weight = any_input();
+    auto pat_matmul = wrap_type<v0::MatMul>({pat_input, pat_weight});
+
+    MultiMatcher multi_matcher("MatMulMatcher");
+    int match_count = 0;
+
+    multi_matcher.register_patterns({pat_matmul}, [&](const auto& grouped_matches) {
+        const auto& matches = grouped_matches.at(pat_matmul);
+        match_count = static_cast<int>(matches.size());
+        for (const auto& match : matches) {
+            auto node = match.at(pat_matmul).get_node();
+            EXPECT_TRUE(ov::as_type<v0::MatMul>(node));
+        }
+    });
+
+    multi_matcher.run_on_model(model);
+    EXPECT_EQ(match_count, 3);
+}
+
+TEST(MultiMatcherTest, MatchesAddOverMatMul) {
+    using namespace ov::pass::pattern;
+    using namespace ov::op;
+
+    auto input = std::make_shared<v0::Parameter>(element::f32, Shape{1, 4});
+    auto weight1 = v0::Constant::create(element::f32, Shape{4, 4}, {0});
+    auto weight2 = v0::Constant::create(element::f32, Shape{1, 4}, {1});
+
+    auto matmul = std::make_shared<v0::MatMul>(input, weight1);
+    auto add = std::make_shared<v1::Add>(matmul, weight2);
+
+    auto model = std::make_shared<Model>(OutputVector{add}, ParameterVector{input});
+
+    auto a = any_input();
+    auto b = any_input();
+    auto pat_matmul = wrap_type<v0::MatMul>({a, b});
+    auto pat_add = wrap_type<v1::Add>({pat_matmul, any_input()});
+
+    MultiMatcher multi_matcher("AddOverMatMulMatcher");
+    int matched_adds = 0;
+    int matched_matmuls = 0;
+
+    multi_matcher.register_patterns({pat_add, pat_matmul}, [&](const auto& grouped_matches) {
+        if (grouped_matches.count(pat_add)) {
+            matched_adds = static_cast<int>(grouped_matches.at(pat_add).size());
+        }
+
+        if (grouped_matches.count(pat_matmul)) {
+            matched_matmuls = static_cast<int>(grouped_matches.at(pat_matmul).size());
+        }
+    });
+
+    multi_matcher.run_on_model(model);
+    EXPECT_EQ(matched_adds, 0);
+    EXPECT_EQ(matched_matmuls, 1);
 }
