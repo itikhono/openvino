@@ -16,13 +16,14 @@ using namespace ov::op;
 
 std::shared_ptr<Node> l2_norm_block(const Output<Node>& input) {
     auto pow = wrap_type<v1::Power>({input, any_input()});
-    auto var = wrap_type<v1::ReduceMean>({pow, any_input()});
+    auto var = wrap_type<v1::ReduceMean, v1::ReduceSum>({pow, any_input()});
     auto sqrt = wrap_type<v0::Sqrt>({var});
     auto div = wrap_type<v1::Divide>({input, sqrt});
-    auto scale = wrap_type<v1::Multiply>({div, any_input()});
-    auto shift = wrap_type<v1::Add>({scale, any_input()});
 
-    return std::make_shared<pattern::op::Block>(OutputVector{input}, OutputVector{shift}, "l2_norm");
+    auto scale = wrap_type<v1::Multiply>({div, any_input()});
+    auto shift = optional<v1::Add>({scale, any_input()});
+
+    return std::make_shared<pattern::op::Block>(OutputVector{input}, OutputVector{scale}, "l2_norm");
 }
 
 std::shared_ptr<Node> dq_constant_block() {
@@ -87,9 +88,8 @@ std::shared_ptr<Node> post_sdpa_projection_block(const Output<Node>& qkv) {
     auto t2 = wrap_type<v1::Transpose>({qkv, any_input()});
     auto reshaped = wrap_type<v1::Reshape>({t2, any_input()});
     auto proj = wrap_type<v0::MatMul>({reshaped, any_input()});
-    auto out = wrap_type<v1::Add>({proj, any_input()});
 
-    return std::make_shared<pattern::op::Block>(OutputVector{qkv}, OutputVector{out}, "post_sdpa_projection_block");
+    return std::make_shared<pattern::op::Block>(OutputVector{qkv}, OutputVector{proj}, "post_sdpa_projection_block");
 }
 
 }
