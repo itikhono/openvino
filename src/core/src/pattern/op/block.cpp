@@ -48,7 +48,6 @@ bool Block::match_value(Matcher* matcher,
                         const Output<Node>& graph_value) {
     auto block_pattern_root = m_outputs.front();
     auto local_matcher = std::make_shared<Matcher>(block_pattern_root.get_node_shared_ptr(), "BlockMatcher");
-
     if (!local_matcher->match_value(block_pattern_root, graph_value)) {
         return false;
     }

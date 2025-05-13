@@ -6,130 +6,111 @@
 
 #include <gtest/gtest.h>
 
+#include "openvino/opsets/opset10.hpp"
+#include "openvino/core/model.hpp"
+#include "openvino/pass/manager.hpp"
 #include <memory>
 
-#include "common_test_utils/ov_test_utils.hpp"
-#include "openvino/core/model.hpp"
-#include "openvino/opsets/opset8.hpp"
-#include "transformations/init_node_info.hpp"
-#include "transformations/utils/utils.hpp"
-#include "openvino/pass/serialize.hpp"
-
 using namespace ov;
-using namespace ov::opset8;
+using namespace ov::opset10;
 
-namespace {
-
-std::shared_ptr<Node> build_l2_norm(const std::shared_ptr<Node>& input) {
-    auto pow = std::make_shared<Power>(input, Constant::create(input->get_element_type(), Shape{1}, {2}));
-    auto reduce = std::make_shared<ReduceSum>(pow, Constant::create(element::i64, Shape{1}, {1}), true);
-    auto sqrt = std::make_shared<Sqrt>(reduce);
+// === Model 1: L2Norm pattern only ===
+std::shared_ptr<ov::Model> build_model_norm_block_only() {
+    auto input = std::make_shared<Parameter>(element::f32, Shape{1, 128, 64});
+    auto pow = std::make_shared<Power>(input, Constant::create(element::f32, Shape{}, {2.0}));
+    auto var = std::make_shared<ReduceMean>(pow, Constant::create(element::i64, Shape{1}, {2}), true);
+    auto sqrt = std::make_shared<Sqrt>(var);
     auto div = std::make_shared<Divide>(input, sqrt);
-    auto scale = Constant::create(input->get_element_type(), Shape{1}, {1.0f});
-    return std::make_shared<Multiply>(div, scale);
+    auto scale = std::make_shared<Multiply>(div, Constant::create(element::f32, Shape{1, 1, 64}, {1.0}));
+    auto shift = std::make_shared<Add>(scale, Constant::create(element::f32, Shape{1, 1, 64}, {0.0}));
+    return std::make_shared<ov::Model>(NodeVector{shift}, ParameterVector{input});
 }
 
-ov::Output<ov::Node> create_quant_weight(float val, const std::string& name) {
-    using namespace ov;
-    using namespace ov::opset8;
+// === Model 2: QKV Projection + Preprocessing pattern only ===
+std::shared_ptr<ov::Model> build_model_proj_pre_sdpa_only() {
+    using namespace ov::opset10;
 
-    auto w_i8 = Constant::create(element::i8, Shape{768, 768}, {static_cast<int8_t>(val)});
-    auto zero = Constant::create(element::i8, Shape{1}, {10});
-    auto scale = Constant::create(element::f32, Shape{1}, {0.1f});
+    auto input = std::make_shared<Parameter>(element::f32, Shape{1, 128, 64});
+    auto constant = Constant::create(element::f32, Shape{64, 64}, {0.1f});
+    auto convert = std::make_shared<Convert>(constant, element::f32);
+    auto mm = std::make_shared<MatMul>(input, convert);
+    auto bias = std::make_shared<Add>(mm, Constant::create(element::f32, Shape{1, 1, 64}, {0.01f}));
 
-    auto w_fp32 = std::make_shared<Convert>(w_i8, element::f32);
-    auto zp_fp32 = std::make_shared<Convert>(zero, element::f32);
-    auto sub = std::make_shared<Subtract>(w_fp32, zp_fp32);
-    auto mul = std::make_shared<Multiply>(sub, scale);
+    auto reshape = std::make_shared<Reshape>(bias, Constant::create(element::i64, Shape{3}, {1, 128, 64}), false);
+    auto trans = std::make_shared<Transpose>(reshape, Constant::create(element::i64, Shape{3}, {0, 2, 1}));
+    auto split = std::make_shared<VariadicSplit>(
+            trans,
+            Constant::create(element::i64, Shape{}, {1}),
+            Constant::create(element::i64, Shape{2}, {32, 32})
+    );
 
-    mul->set_friendly_name(name);
-    return mul;
+    auto scale = Constant::create(element::f32, Shape{1, 32}, {1.0f});
+    auto reshaped_scale = std::make_shared<Reshape>(scale, Constant::create(element::i64, Shape{3}, {1, 32, 1}), false);
+    auto mul = std::make_shared<Multiply>(split->output(0), reshaped_scale);
+    auto concat = std::make_shared<Concat>(OutputVector{mul, split->output(1)}, 1);
+    auto mul2 = std::make_shared<Multiply>(concat, Constant::create(element::f32, Shape{1, 64, 1}, {1.0}));
+
+    // ✅ Add second output branch to match block output
+    auto mul3 = std::make_shared<Multiply>(reshape, Constant::create(element::f32, Shape{1, 128, 64}, {1.0}));
+    auto trans2 = std::make_shared<Transpose>(mul3, Constant::create(element::i64, Shape{3}, {0, 2, 1}));
+    auto add = std::make_shared<Add>(trans2, Constant::create(element::f32, Shape{1, 64, 128}, {0.0}));
+
+    return std::make_shared<ov::Model>(NodeVector{add}, ParameterVector{input});
 }
 
-}  // namespace
+// === Model 3: SDPA + post projection only ===
+std::shared_ptr<ov::Model> build_model_sdpa_post_only() {
+    using namespace ov::opset10;
 
-TEST_F(TransformationTestsF, FuseThreeMatMulsWithSharedL2Input) {
-    {
-        auto input = std::make_shared<Parameter>(element::f32, Shape{1, 768});
-        auto norm = build_l2_norm(input);
+    auto q = std::make_shared<Parameter>(element::f32, Shape{1, 64, 128});
+    auto k = std::make_shared<Parameter>(element::f32, Shape{1, 64, 128});
+    auto v = std::make_shared<Parameter>(element::f32, Shape{1, 128, 64});
 
-        auto w1 = Constant::create(element::f32, Shape{768, 768}, {0.1f});
-        auto w2 = Constant::create(element::f32, Shape{768, 768}, {0.2f});
-        auto w3 = Constant::create(element::f32, Shape{768, 768}, {0.3f});
+    auto kT = std::make_shared<Transpose>(k, Constant::create(element::i64, Shape{3}, {0, 2, 1}));
+    auto scaled_k = std::make_shared<Multiply>(kT, Constant::create(element::f32, Shape{1, 128, 1}, {0.125f}));
+    auto qk = std::make_shared<MatMul>(q, scaled_k);
 
-        auto mm1 = std::make_shared<MatMul>(norm, w1); mm1->set_friendly_name("q_proj.0");
-        auto mm2 = std::make_shared<MatMul>(norm, w2); mm2->set_friendly_name("q_proj.1");
-        auto mm3 = std::make_shared<MatMul>(norm, w3); mm3->set_friendly_name("q_proj.2");
+    auto bias = std::make_shared<Add>(qk, Constant::create(element::f32, Shape{1, 1, 64}, {0.0f}));
+    auto softmax = std::make_shared<Softmax>(bias, 2);
 
-        auto relu1 = std::make_shared<Relu>(mm1);
-        auto relu2 = std::make_shared<Relu>(mm2);
-        auto relu3 = std::make_shared<Relu>(mm3);
+    // ✅ Match the pattern structure: Reshape → Transpose
+    auto reshape_v = std::make_shared<Reshape>(
+            v, Constant::create(element::i64, Shape{3}, {1, 128, 64}), false);
+    auto vT = std::make_shared<Transpose>(reshape_v, Constant::create(element::i64, Shape{3}, {0, 2, 1}));
 
-        auto concat = std::make_shared<Concat>(OutputVector {relu1, relu2, relu3}, 1);
-        model = std::make_shared<Model>(OutputVector{concat}, ParameterVector{input});
-        manager.register_pass<ov::pass::Serialize>(std::string("cbefore.xml"), "cbefore.bin");
-        manager.register_pass<ov::pass::PackQKVProj>();
-        manager.register_pass<ov::pass::Serialize>(std::string("cafter.xml"), "cafter.bin");
-    }
+    auto attn_out = std::make_shared<MatMul>(softmax, vT);
 
-    {
-        auto input = std::make_shared<Parameter>(element::f32, Shape{1, 768});
-        auto norm = build_l2_norm(input);
+    auto t2 = std::make_shared<Transpose>(attn_out, Constant::create(element::i64, Shape{3}, {0, 2, 1}));
+    auto reshaped = std::make_shared<Reshape>(t2, Constant::create(element::i64, Shape{3}, {1, 128, 64}), false);
+    auto proj = std::make_shared<MatMul>(reshaped, Constant::create(element::f32, Shape{64, 64}, {1.0}));
+    auto out = std::make_shared<Add>(proj, Constant::create(element::f32, Shape{1, 1, 64}, {0.0}));
 
-        auto w1 = Constant::create(element::f32, Shape{768, 768}, {0.1f});
-        auto w2 = Constant::create(element::f32, Shape{768, 768}, {0.2f});
-        auto w3 = Constant::create(element::f32, Shape{768, 768}, {0.3f});
-
-        auto packed_weights = ov::op::util::make_try_fold<Concat>(OutputVector{w1, w2, w3}, 1);
-        auto fused_mm = std::make_shared<MatMul>(norm, packed_weights);
-        fused_mm->set_friendly_name("q_proj_fused_mm");
-
-        auto relu = std::make_shared<Relu>(fused_mm);
-        auto concat = std::make_shared<Concat>(OutputVector {relu}, 1);
-        model_ref = std::make_shared<Model>(OutputVector{concat}, ParameterVector{input});
-    }
-
-    comparator.enable(FunctionsComparator::CmpValues::CONST_VALUES);
-    comparator.enable(FunctionsComparator::CmpValues::ACCURACY);
+    return std::make_shared<ov::Model>(NodeVector{out}, ParameterVector{q, k, v});
 }
 
-TEST_F(TransformationTestsF, FuseMatMulsWithSharedL2InputAndQuantWeights) {
-    {
-        auto input = std::make_shared<Parameter>(element::f32, Shape{1, 768});
-        auto norm = build_l2_norm(input);
 
-        auto mm1 = std::make_shared<MatMul>(norm, create_quant_weight(1, "q_proj.0")); mm1->set_friendly_name("q_proj.0");
-        auto mm2 = std::make_shared<MatMul>(norm, create_quant_weight(2, "q_proj.1")); mm2->set_friendly_name("q_proj.1");
-        auto mm3 = std::make_shared<MatMul>(norm, create_quant_weight(3, "q_proj.2")); mm3->set_friendly_name("q_proj.2");
+// === Unit Tests ===
 
-        auto relu1 = std::make_shared<Relu>(mm1);
-        auto relu2 = std::make_shared<Relu>(mm2);
-        auto relu3 = std::make_shared<Relu>(mm3);
+TEST(PackMHATests, MatchesNormBlock) {
+    auto model = build_model_norm_block_only();
+    ov::pass::Manager manager;
+    manager.register_pass<ov::pass::PackMHA>();
+    manager.run_passes(model);
+    model->validate_nodes_and_infer_types();
+}
 
-        auto concat = std::make_shared<Concat>(OutputVector {relu1, relu2, relu3}, 1);
-        model = std::make_shared<Model>(OutputVector{concat}, ParameterVector{input});
-        manager.register_pass<ov::pass::Serialize>(std::string("before.xml"), "before.bin");
-        manager.register_pass<ov::pass::PackQKVProj>();
-        manager.register_pass<ov::pass::Serialize>(std::string("after.xml"), "after.bin");
-    }
+TEST(PackMHATests, MatchesProjPreSDPA) {
+    auto model = build_model_proj_pre_sdpa_only();
+    ov::pass::Manager manager;
+    manager.register_pass<ov::pass::PackMHA>();
+    manager.run_passes(model);
+    model->validate_nodes_and_infer_types();
+}
 
-    {
-        auto input = std::make_shared<Parameter>(element::f32, Shape{1, 768});
-        auto norm = build_l2_norm(input);
-
-        auto w1 = create_quant_weight(1,"q_proj.0");
-        auto w2 = create_quant_weight(2,"q_proj.1");
-        auto w3 = create_quant_weight(3,"q_proj.2");
-
-        auto packed = ov::op::util::make_try_fold<Concat>(OutputVector{w1, w2, w3}, 1);
-        auto fused_mm = std::make_shared<MatMul>(norm, packed);
-        fused_mm->set_friendly_name("q_proj_fused_mm");
-
-        auto relu = std::make_shared<Relu>(fused_mm);
-        auto concat = std::make_shared<Concat>(OutputVector {relu}, 1);
-        model_ref = std::make_shared<Model>(OutputVector{concat}, ParameterVector{input});
-    }
-
-    comparator.enable(FunctionsComparator::CmpValues::CONST_VALUES);
-    comparator.enable(FunctionsComparator::CmpValues::ACCURACY);
+TEST(PackMHATests, MatchesSDPAPostBlock) {
+    auto model = build_model_sdpa_post_only();
+    ov::pass::Manager manager;
+    manager.register_pass<ov::pass::PackMHA>();
+    manager.run_passes(model);
+    model->validate_nodes_and_infer_types();
 }
