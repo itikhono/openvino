@@ -11,6 +11,7 @@ namespace ov::pass::pattern::blocks {
 
 std::shared_ptr<ov::Node> l2_norm_block(const ov::Output<ov::Node>& input);
 std::shared_ptr<ov::Node> dq_constant_block();
+std::shared_ptr<ov::Node> attention_mask();
 std::shared_ptr<ov::Node> qkv_projection_block(const ov::Output<ov::Node>& input);
 std::shared_ptr<ov::Node> sdpa_preprocessing_block(const ov::Output<ov::Node>& input);
 std::shared_ptr<ov::Node> sdpa_block(const ov::Output<ov::Node>& q,

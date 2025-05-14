@@ -4,6 +4,8 @@
 #include "openvino/op/reshape.hpp"
 #include "openvino/op/transpose.hpp"
 #include "openvino/op/add.hpp"
+#include "openvino/op/convert.hpp"
+#include "openvino/op/matmul.hpp"
 #include "openvino/pass/pattern/op/optional.hpp"
 
 using namespace ov;
@@ -20,6 +22,7 @@ std::vector<std::shared_ptr<Node>> get_sdpa_order(const std::unordered_set<Node*
     // AddN(Add2(Add1(post_sdpa_proj_1, post_sdpa_proj_2), post_sdpa_proj_3), post_sdpa_proj_N + 1)
     ov::op::v1::Add* current_add = nullptr;
     for (const auto& proj_node : post_sdpa_proj) {
+        std::cout << "proj_node: " << proj_node << "\n";
         const auto& output = proj_node->output(0);
         const auto& targets = output.get_target_inputs();
 
@@ -43,6 +46,7 @@ std::vector<std::shared_ptr<Node>> get_sdpa_order(const std::unordered_set<Node*
     }
 
     if (!current_add) {
+        std::cout << "Can't find the first Add in the chain\n";
         return {};
     }
 
@@ -50,8 +54,10 @@ std::vector<std::shared_ptr<Node>> get_sdpa_order(const std::unordered_set<Node*
     // AddN(Add2(Add1(post_sdpa_proj_1, post_sdpa_proj_2), post_sdpa_proj_3), post_sdpa_proj_N + 1)
     while (true) {
         const auto& targets = current_add->output(0).get_target_inputs();
-        if (targets.size() != 1)
+        if (targets.size() != 1) {
+            std::cout << "Unexpected number of targets for Add: " << targets.size() << "\n";
             return {};
+        }
 
         auto next_node_input = targets.begin();
         current_add = ov::as_type<ov::op::v1::Add>(next_node_input->get_node());
@@ -63,7 +69,7 @@ std::vector<std::shared_ptr<Node>> get_sdpa_order(const std::unordered_set<Node*
         if (post_sdpa_proj.count(input_node)) {
             post_sdpa_ordered.push_back(input_node->shared_from_this());
         } else {
-            std::cout << "Unexpected node in Add chain: " << input_node->get_friendly_name() << "\n";
+            std::cout << "Unexpected node in Add chain: " << current_add << "\n";
             break;
         }
     }
@@ -77,34 +83,53 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
     auto norm_input = any_input();
     auto norm_block = blocks::l2_norm_block(norm_input);
 
+    // Attention mask
+    //auto attention_mask = blocks::attention_mask();
+
     // Projection -> SDPA preprocessing (RoPE?) Pattern:
-    auto proj_input = any_input();
-    auto proj_block = blocks::qkv_projection_block(proj_input);
-    auto pre_sdpa = blocks::sdpa_preprocessing_block(proj_block);
+    //auto proj_input = any_input();
+    auto constant = wrap_type<v0::Constant>();
+    auto convert = optional<v0::Convert>(constant);
+
+    auto dq = blocks::dq_constant_block();
+    auto mm = wrap_type<v0::MatMul>({norm_block, dq | convert});
+    auto bias = optional<v1::Add>({mm, any_input()});
+    //auto pre_sdpa = blocks::sdpa_preprocessing_block(proj_block);
 
     // SDPA + linear projection Pattern:
-    auto q = any_input();
-    auto k = any_input();
+    auto q = blocks::sdpa_preprocessing_block(bias);
+    auto k = blocks::sdpa_preprocessing_block(bias);
     auto v = any_input();
 
-    auto v_proj_block = blocks::qkv_projection_block(v);
-    auto reshape_v = wrap_type<v1::Reshape>({v_proj_block, any_input()});
+    auto reshape_v = wrap_type<v1::Reshape>({bias, any_input()});
     auto vT = optional<v1::Transpose>({reshape_v, any_input()});
 
     auto sdpa = blocks::sdpa_block(q, k, vT);
-    auto post_sdpa = blocks::post_sdpa_projection_block(sdpa);
+    auto t2 = wrap_type<v1::Transpose>({sdpa, any_input()});
+    auto reshaped = wrap_type<v1::Reshape>({t2, any_input()});
+    auto proj = wrap_type<v0::MatMul>({reshaped, any_input()});
 
     auto callback = [=](const std::unordered_map<std::shared_ptr<Node>, std::vector<PatternValueMap>>& matches) {
         using namespace ov::pass::pattern::op;
 
+        // DEBUG
+        std::cout << "matches size " << matches.size() << std::endl;
+        for (const auto& [root, patterns] : matches) {
+            std::cout << "pattern size" << patterns.size() << std::endl;
+            for (const auto& m : patterns) {
+                std::cout << "pattern = " << root->get_friendly_name() << std::endl;
+                std::cout << m.at(root->shared_from_this()).get_node()->get_friendly_name() << std::endl;
+                
+
+                
+            }
+        }
+        // DEBUG END
+
         std::unordered_set<Node*> post_sdpa_proj;
         std::unordered_map<Node*, const PatternValueMap*> node_to_pm;
-        for (const auto& pm : matches.at(post_sdpa)) {
-            auto block = ov::as_type<Block>(pm.at(post_sdpa).get_node());
-            if (!block || block->get_outputs().empty())
-                continue;
-
-            auto root_node = block->get_outputs()[0].get_node();
+        for (const auto& pm : matches.at(proj)) {
+            auto root_node = pm.at(proj).get_node();
             post_sdpa_proj.insert(root_node);
             node_to_pm[root_node] = &pm;
         }
@@ -114,25 +139,9 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
             std::cout << "Can't detect the order" << std::endl;
             return;
         }
-
-        std::cout << "matches size " << matches.size() << std::endl;
-        for (const auto& [root, patterns] : matches) {
-            for (const auto& m : patterns) {
-                // Debug: show what got matched
-                for (const auto& [pattern_node, real_value] : m) {
-                    std::cout << "Matched: " << pattern_node->get_friendly_name()
-                              << " => " << real_value.get_node()->get_friendly_name() << "\n";
-                    std::cout<< ov::as_type_ptr<Block>(real_value.get_node_shared_ptr())->get_outputs()[0].get_node()->get_friendly_name() << std::endl;;
-                }
-
-                // TODO: Fuse heads, pack Q/K/V, replace SDPA branches
-            }
-        }
-
-
     };
 
-    register_patterns({norm_block, pre_sdpa, post_sdpa},
+    register_patterns({bias},
                       callback,
                       true);
 }

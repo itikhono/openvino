@@ -43,14 +43,14 @@ std::shared_ptr<Node> dq_constant_block() {
     return std::make_shared<pattern::op::Block>(OutputVector{}, OutputVector{mul}, "dq_constant");
 }
 
-std::shared_ptr<Node> qkv_projection_block(const Output<Node>& input) {
-    auto constant = wrap_type<v0::Constant>();
-    auto convert = wrap_type<v0::Convert>(constant);
-
-    auto mm = wrap_type<v0::MatMul>({input, dq_constant_block() | convert});
-    auto bias = optional<v1::Add>({mm, any_input()});
-
-    return std::make_shared<pattern::op::Block>(OutputVector{input}, OutputVector{bias}, "qkv_projection");
+std::shared_ptr<ov::Node> attention_mask() {
+    auto mask = wrap_type<v0::Parameter>();
+    auto mask_unsqueeze_1 = wrap_type<v0::Unsqueeze>({mask, any_input()});
+    auto mask_unsqueeze_2 = wrap_type<v0::Unsqueeze>({mask_unsqueeze_1, any_input()});
+    auto mul = wrap_type<v1::Multiply>({mask_unsqueeze_2, any_input()});
+    auto add = wrap_type<v1::Add>({mul, any_input()});
+    auto mask_slice = wrap_type<v8::Slice>({add, any_input(), any_input(), any_input(), any_input()});
+    return std::make_shared<pattern::op::Block>(OutputVector{}, OutputVector{mask_slice}, "attention_mask");
 }
 
 // RoPE? Q, K

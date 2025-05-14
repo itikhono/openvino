@@ -69,8 +69,13 @@ bool Block::match_value(Matcher* matcher,
     }
 
     auto matched_block = std::make_shared<Block>(real_inputs, real_outputs, get_friendly_name());
-
+    //std::cout << "Matched block: " << matched_block->get_friendly_name() << "\n";
     auto& pattern_map = matcher->get_pattern_value_map();
     pattern_map[shared_from_this()] = matched_block->output(0);
+    pattern_map.merge(local_pm);
+
+    for (const auto& matched_node : local_matcher->get_matched_nodes()) {
+        matcher->add_node(matched_node);
+    }
     return true;
 }
