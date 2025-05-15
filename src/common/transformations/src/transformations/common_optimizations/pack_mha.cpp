@@ -97,11 +97,11 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
     //auto pre_sdpa = blocks::sdpa_preprocessing_block(proj_block);
 
     // SDPA + linear projection Pattern:
-    auto q = blocks::sdpa_preprocessing_block(bias);
-    auto k = blocks::sdpa_preprocessing_block(bias);
+    auto q = blocks::sdpa_preprocessing_block(any_input());
+    auto k = blocks::sdpa_preprocessing_block(any_input());
     auto v = any_input();
 
-    auto reshape_v = wrap_type<v1::Reshape>({bias, any_input()});
+    auto reshape_v = wrap_type<v1::Reshape>({v, any_input()});
     auto vT = optional<v1::Transpose>({reshape_v, any_input()});
 
     auto sdpa = blocks::sdpa_block(q, k, vT);
@@ -119,9 +119,6 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
             for (const auto& m : patterns) {
                 std::cout << "pattern = " << root->get_friendly_name() << std::endl;
                 std::cout << m.at(root->shared_from_this()).get_node()->get_friendly_name() << std::endl;
-                
-
-                
             }
         }
         // DEBUG END
@@ -136,12 +133,11 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
 
         auto post_sdpa_proj_ordered = get_sdpa_order(post_sdpa_proj);
         if (post_sdpa_proj_ordered.empty()) {
-            std::cout << "Can't detect the order" << std::endl;
             return;
         }
     };
 
-    register_patterns({bias},
+    register_patterns({bias, proj},
                       callback,
                       true);
 }
