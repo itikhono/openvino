@@ -12,6 +12,7 @@
 #include <memory>
 #include <openvino/runtime/core.hpp>
 #include <transformations/utils/print_model.hpp>
+#include <openvino/pass/serialize.hpp>
 
 using namespace ov;
 using namespace ov::opset10;
@@ -188,6 +189,7 @@ TEST(PackMHATests, RealModel) {
 
     ov::pass::Manager manager;
     manager.register_pass<ov::pass::PackMHA>();
+    manager.register_pass<ov::pass::Serialize>(std::string("/workspace/buffer/pack_mha.xml"), "/workspace/buffer/pack_mha.bin");
     manager.run_passes(model);
     model->validate_nodes_and_infer_types();
 }
