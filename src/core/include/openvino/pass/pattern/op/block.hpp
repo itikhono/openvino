@@ -3,13 +3,32 @@
 #include "openvino/pass/pattern/op/pattern.hpp"
 #include "openvino/pass/pattern/matcher.hpp"
 
-namespace ov {
-namespace pass {
-namespace pattern {
-namespace op {
+namespace ov::pass::pattern::op {
 
 /**
- * @brief Block: reusable pattern subgraph with named internal pattern ops.
+ * @brief Block is a reusable subgraph pattern composed of named inputs and outputs.
+ *
+ * It wraps a group of connected pattern nodes and allows treating them as a single unit.
+ * Block uses a local Matcher internally and merges its results into the main matcher context.
+ *
+ * Example:
+ *
+ *                Input (x)
+ *                   │
+ *                   ▼
+ *           ┌────────────────────┐
+ *           │     Block:         │
+ *           │   "norm_block"     │
+ *           │                    │
+ *           │  NormalizeL2       │
+ *           │       │            │
+ *           │       ▼            │
+ *           │     Multiply       |
+ *           └────────────────────┘
+ *                   │
+ *                 Output
+ *
+ * Block inputs/outputs are exposed for use in higher-level patterns.
  */
 class OPENVINO_API Block : public Pattern {
 public:
@@ -23,12 +42,6 @@ public:
                      const Output<Node>& pattern_value,
                      const Output<Node>& graph_value) override;
 
-    std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
-
-    const std::unordered_map<std::string, Output<Node>>& get_named_outputs() const {
-        return m_named_outputs;
-    }
-
     const OutputVector& get_inputs() const {
         return m_inputs;
     }
@@ -37,19 +50,9 @@ public:
         return m_outputs;
     }
 
-/*    void set_named_outputs(const std::unordered_map<std::string, Output<Node>>& named) {
-        m_named_outputs = named;
-    }*/
-
 private:
     OutputVector m_inputs;
     OutputVector m_outputs;
-    std::unordered_map<std::string, Output<Node>> m_named_outputs;
-
-    void extract_named_outputs();
 };
 
-}  // namespace op
-}  // namespace pattern
-}  // namespace pass
-}  // namespace ov
+}  // namespace ov::pass::pattern::op
