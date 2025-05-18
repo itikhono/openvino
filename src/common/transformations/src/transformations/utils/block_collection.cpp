@@ -4,6 +4,7 @@
 #include "transformations/utils/block_collection.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "openvino/pass/pattern/op/optional.hpp"
+#include "openvino/pass/pattern/op/label.hpp"
 #include "openvino/op/power.hpp"
 #include "openvino/op/matmul.hpp"
 #include "openvino/op/ops.hpp"
@@ -40,7 +41,10 @@ std::shared_ptr<Node> dq_constant_block() {
     auto scale_shape = pattern::optional<v1::Reshape, v0::Unsqueeze>({scale_convert, any_input()});
 
     auto mul = wrap_type<v1::Multiply>({subtract, scale_shape});
-    return std::make_shared<pattern::op::Block>(OutputVector{}, OutputVector{mul}, "dq_constant");
+    auto block = std::make_shared<pattern::op::Block>(OutputVector{}, OutputVector{mul}, "dq_constant");
+
+    REGISTER_ANCHORS(block, constant, zp, scale);
+    return block;
 }
 
 std::shared_ptr<ov::Node> attention_mask() {

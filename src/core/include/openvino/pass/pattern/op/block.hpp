@@ -2,6 +2,8 @@
 
 #include "openvino/pass/pattern/matcher.hpp"
 #include "openvino/pass/pattern/op/pattern.hpp"
+#include <optional>
+#include "openvino/pass/pattern/op/block_util.hpp"
 
 namespace ov::pass::pattern::op {
 
@@ -46,9 +48,28 @@ public:
         return m_outputs;
     }
 
+    void register_anchor(const std::string& name, const ov::Output<ov::Node>& output) {
+        m_named_anchors[name] = output;
+    }
+
+    std::optional<Output<Node>> get_anchor(const std::string& name,
+                                        const PatternValueMap& pm) const {
+        auto it = m_named_anchors.find(name);
+        if (it == m_named_anchors.end())
+            return std::nullopt;
+
+        auto pattern_node = it->second.get_node_shared_ptr();
+        auto matched_it = pm.find(pattern_node);
+        if (matched_it == pm.end())
+            return std::nullopt;
+
+        return matched_it->second;
+    }
 private:
     OutputVector m_inputs;
     OutputVector m_outputs;
+
+    std::map<std::string, Output<Node>> m_named_anchors;
 };
 
 }  // namespace ov::pass::pattern::op

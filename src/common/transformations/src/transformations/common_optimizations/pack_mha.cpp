@@ -80,6 +80,8 @@ std::tuple<ov::NodeVector, Node*> get_sdpa_order(const std::unordered_set<Node*>
     return {post_sdpa_ordered, current_add};
 }
 
+
+// todo: Use Weights class here to fuse
 Output<Node> fuse_weights_and_replace(const ov::NodeVector& ordered_nodes, int64_t input_node_idx, int64_t concat_dim_idx) {
     using namespace ov;
     using namespace ov::op;
@@ -99,7 +101,25 @@ Output<Node> fuse_weights_and_replace(const ov::NodeVector& ordered_nodes, int64
     return fused_op->output(0);
 }
 
+struct Weights {
+    std::shared_ptr<Node> weights;
+    std::shared_ptr<Node> scale;
+    std::shared_ptr<Node> zero_point;
+
+    Weights(std::shared_ptr<Node>& _weights)
+        : weights(_weights) {}
+
+    Weights(std::shared_ptr<Node>& _weights, 
+            std::shared_ptr<Node>& _scale,
+            std::shared_ptr<Node>& _zero_point)
+    : weights(_weights),
+      scale(_scale),
+      zero_point(_zero_point) {}
+};
+
 }
+
+
 
 PackMHA::PackMHA() : MultiMatcher("PackMHA") {
     // input -> Normalization Pattern:
@@ -111,13 +131,15 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
 
     // Projection -> SDPA preprocessing (RoPE?) Pattern:
     //auto proj_input = any_input();
-    auto constant = wrap_type<v0::Constant>();
-    auto convert = optional<v0::Convert>(constant);
+    auto weights_constant = wrap_type<v0::Constant>();
+    auto opt_convert = optional<v0::Convert>(weights_constant);
 
-    auto dq = blocks::dq_constant_block();
-    auto mm = wrap_type<v0::MatMul>({norm_block, dq | convert});
-    auto bias = wrap_type<v1::Add>({mm, any_input()});
-    //auto pre_sdpa = blocks::sdpa_preprocessing_block(proj_block);
+    auto proj_dq = blocks::dq_constant_block();
+    auto qkv_projections = wrap_type<v0::MatMul>({norm_block, proj_dq | opt_convert});
+
+    auto bias_const = wrap_type<v0::Constant>();
+    auto opt_bias_convert = optional<v0::Convert>(bias_const);
+    auto proj_bias = wrap_type<v1::Add>({qkv_projections, opt_bias_convert});
 
     // SDPA + linear projection Pattern:
     auto q_input = any_input();
@@ -133,7 +155,12 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
     auto sdpa = blocks::sdpa_block(q, k, vT);
     auto t2 = wrap_type<v1::Transpose>({sdpa, any_input()});
     auto reshaped = wrap_type<v1::Reshape>({t2, any_input()});
-    auto proj = wrap_type<v0::MatMul>({reshaped, any_input()});
+
+    auto lin_weights_constant = wrap_type<v0::Constant>();
+    auto lin_opt_convert = optional<v0::Convert>(weights_constant);
+
+    auto lin_proj_dq = blocks::dq_constant_block();
+    auto proj = wrap_type<v0::MatMul>({reshaped, lin_proj_dq | lin_opt_convert});
 
     auto callback = [=](const std::unordered_map<std::shared_ptr<Node>, std::vector<PatternValueMap>>& matches) {
         using namespace ov::pass::pattern::op;
@@ -158,8 +185,8 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
         }
 
         std::unordered_map<Node*, const PatternValueMap*> node_to_bias_pm;
-        for (const auto& pm : matches.at(bias)) {
-            auto root_node = pm.at(bias).get_node();
+        for (const auto& pm : matches.at(proj_bias)) {
+            auto root_node = pm.at(proj_bias).get_node();
             node_to_bias_pm[root_node] = &pm;
         }
 
@@ -168,15 +195,20 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
             return;
         }
 
-        ov::NodeVector q_matmuls, q_biases,
-                       k_matmuls, k_biases,
-                       v_matmuls, v_biases,
-                       ordered_proj;
+        // todo: replace it with Weights vectors above
+        // ov::NodeVector q_matmuls, q_biases,
+        //                k_matmuls, k_biases,
+        //                v_matmuls, v_biases,
+        //                ordered_proj;
 
+        // todo: use these vectors to will it in order
+        std::vector<Weights> q_weights, k_weights, v_weights, linear_projection;
         for (const auto& node : post_sdpa_proj_ordered) {
             const auto* pm = node_to_proj_pm.at(node.get());
 
             // Collect post SDPA projections
+
+            // todo: Use Weights class here
             auto matmul = pm->at(proj);
             ordered_proj.push_back(matmul.get_node_shared_ptr());
 
@@ -185,15 +217,28 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
             auto k_pm = node_to_bias_pm.at(pm->at(k_input).get_node());
             auto v_pm = node_to_bias_pm.at(pm->at(v_input).get_node());
 
-            q_matmuls.push_back(q_pm->at(mm).get_node_shared_ptr());
-            k_matmuls.push_back(k_pm->at(mm).get_node_shared_ptr());
-            v_matmuls.push_back(v_pm->at(mm).get_node_shared_ptr());
+            for (const auto& input : {q_input, k_input, v_input}) {
+                auto _pm = node_to_bias_pm.at(pm->at(input).get_node());
+                if (_pm->count(proj_dq)) {
+                    // todo fix it
+                    Weights(_pm->at(proj_dq).get_node_shared_ptr());
+                } else if (_pm->count(weights_constant)) {
+                    Weights(_pm->at(weights_constant).get_node_shared_ptr());
+                } else {
+                    return;
+                }
+            }
 
-            q_biases.push_back(q_pm->at(bias).get_node_shared_ptr());
-            k_biases.push_back(k_pm->at(bias).get_node_shared_ptr());
-            v_biases.push_back(v_pm->at(bias).get_node_shared_ptr());
+            // q_matmuls.push_back(q_pm->at(qkv_projections).get_node_shared_ptr());
+            // k_matmuls.push_back(k_pm->at(qkv_projections).get_node_shared_ptr());
+            // v_matmuls.push_back(v_pm->at(qkv_projections).get_node_shared_ptr());
+
+            // q_biases.push_back(q_pm->at(proj_bias).get_node_shared_ptr());
+            // k_biases.push_back(k_pm->at(proj_bias).get_node_shared_ptr());
+            // v_biases.push_back(v_pm->at(proj_bias).get_node_shared_ptr());
         }
 
+        // todo: Use Weights class here
         fuse_weights_and_replace(q_matmuls, 1, 1);
         fuse_weights_and_replace(q_biases, 0, 2);
 
@@ -203,30 +248,23 @@ PackMHA::PackMHA() : MultiMatcher("PackMHA") {
         fuse_weights_and_replace(v_matmuls, 1, 1);
         fuse_weights_and_replace(v_biases, 0, 2);
 
-        //auto fused = fuse_weights_and_replace(ordered_proj, 1, 1);
-        //std::cout << "XXXXXXX fused " << fused << std::endl;
-        //int64_t num_heads = post_sdpa_proj_ordered.size();
-
         const auto* proj_pm = node_to_proj_pm.at(post_sdpa_proj_ordered[0].get());
         auto proj_transpose = proj_pm->at(t2).get_node_shared_ptr();
 
+        // ADD FUSING
+        // Originally, we have a chain: Add(...Add(Add(MatMul1, MatMul2), MatMul3)..., MatMulN)
         auto axis_0 = v0::Constant::create(element::i64, Shape{1}, {2});
         auto reduce_0 = std::make_shared<v1::ReduceSum>(proj_transpose, axis_0, false);
        
         auto proj_reshape = proj_pm->at(reshaped).get_node_shared_ptr();
         proj_reshape->input(0).replace_source_output(reduce_0->output(0));
 
-        // ADD FUSING
-        // Originally, we have a chain: Add(...Add(Add(MatMul1, MatMul2), MatMul3)..., MatMulN)
-        // Replaced with single ReduceSum + Reshape
-        //
-
         // todo: check norm_input , this is input(x) to the model, detect idx
         auto proj_matmul = proj_pm->at(proj).get_node_shared_ptr();
         node_after_mha->input(0).replace_source_output(proj_matmul);
     };
 
-    register_patterns({bias, proj},
+    register_patterns({proj_bias, proj},
                       callback,
                       true);
 }
