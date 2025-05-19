@@ -241,7 +241,7 @@ std::vector<std::shared_ptr<Node>> topological_sort(T root_nodes) {
                 // when visited and placed in `nodes_to_do` and after the subtree traversal is finished.
                 // Otherwise it's a loop.
                 OPENVINO_THROW("Loop detected during topological sort starting from '",
-                               node->get_friendly_name(),
+                               node,
                                "' node.");
 
             size_t arg_count = node->get_input_size();

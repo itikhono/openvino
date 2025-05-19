@@ -43,6 +43,7 @@ bool Block::match_value(Matcher* matcher, const Output<Node>& pattern_value, con
     // Pattern Block contains inputs, outputs from the pattern graph
     // Graph Block   contains inputs, outputs from the real graph (ov::Model)
     auto matched_block = std::make_shared<Block>(real_inputs, real_outputs, get_friendly_name());
+    matched_block->set_registered_anchors(m_named_anchors);
 
     // Merge the local_matcher state to the external matcher.
     auto& pattern_map = matcher->get_pattern_value_map();

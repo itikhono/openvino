@@ -24,7 +24,7 @@ std::shared_ptr<Node> l2_norm_block(const Output<Node>& input) {
     auto scale = wrap_type<v1::Multiply>({div, any_input()});
     auto shift = optional<v1::Add>({scale, any_input()});
 
-    return std::make_shared<pattern::op::Block>(OutputVector{input}, OutputVector{scale}, "l2_norm");
+    return std::make_shared<pattern::op::Block>(OutputVector{input}, OutputVector{shift}, "l2_norm");
 }
 
 std::shared_ptr<Node> dq_constant_block() {
@@ -43,7 +43,7 @@ std::shared_ptr<Node> dq_constant_block() {
     auto mul = wrap_type<v1::Multiply>({subtract, scale_shape});
     auto block = std::make_shared<pattern::op::Block>(OutputVector{}, OutputVector{mul}, "dq_constant");
 
-    REGISTER_ANCHORS(block, constant, zp, scale);
+    REGISTER_ANCHORS(block, constant, zp, scale, mul);
     return block;
 }
 
@@ -70,7 +70,7 @@ std::shared_ptr<Node> sdpa_preprocessing_block(const Output<Node>& input) {
 
     auto mul_3 = wrap_type<v1::Multiply>({reshape, any_input()});
     auto transpose_2 = optional<v1::Transpose>({mul_3, any_input()});
-    auto add = wrap_type<v1::Add>({transpose_2, any_input()});
+    auto add = wrap_type<v1::Add>({transpose_2, any_input()}); // todo: use mul_2 as 2nd input
 
     return std::make_shared<pattern::op::Block>(OutputVector{input}, OutputVector{add}, "sdpa_preprocessing");
 }

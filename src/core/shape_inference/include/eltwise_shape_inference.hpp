@@ -23,6 +23,11 @@ std::vector<TRShape> eltwise_shape_infer(const OpType* op, const std::vector<T>&
                               TRShape::merge_into(output_shape, input_shapes[1]),
                               "Argument shapes are inconsistent.");
     } else if (autob.m_type == AutoBroadcastType::NUMPY || autob.m_type == AutoBroadcastType::PDPD) {
+        if (!TRShape::broadcast_merge_into(output_shape, input_shapes[1], autob)) {
+            std::cout << "XXXXXX test " << op->input_value(0).get_node() << std::endl;
+            auto matmul_input = op->input_value(0).get_node();
+            std::cout << "XXXXXX test2 " << matmul_input->input_value(1).get_node() << std::endl;
+        }
         NODE_VALIDATION_CHECK(op,
                               TRShape::broadcast_merge_into(output_shape, input_shapes[1], autob),
                               "Argument shapes are inconsistent.");

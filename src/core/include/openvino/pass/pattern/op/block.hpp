@@ -54,16 +54,29 @@ public:
 
     std::optional<Output<Node>> get_anchor(const std::string& name,
                                         const PatternValueMap& pm) const {
-        auto it = m_named_anchors.find(name);
-        if (it == m_named_anchors.end())
+        if (m_named_anchors.empty()) {
             return std::nullopt;
+        }
+        auto it = m_named_anchors.find(name);
+        if (it == m_named_anchors.end()) {
+            return std::nullopt;
+        }
 
         auto pattern_node = it->second.get_node_shared_ptr();
         auto matched_it = pm.find(pattern_node);
-        if (matched_it == pm.end())
+        if (matched_it == pm.end()) {
             return std::nullopt;
+        }
 
         return matched_it->second;
+    }
+
+    std::map<std::string, Output<Node>>& get_registered_anchors() {
+        return m_named_anchors;
+    }
+
+    void set_registered_anchors(const std::map<std::string, Output<Node>>& anchors) {
+        m_named_anchors = anchors;
     }
 private:
     OutputVector m_inputs;
