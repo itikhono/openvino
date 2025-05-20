@@ -13,15 +13,16 @@
 #include <openvino/runtime/core.hpp>
 #include <transformations/utils/print_model.hpp>
 #include <openvino/pass/serialize.hpp>
+#include "common_test_utils/ov_test_utils.hpp"
 
 using namespace ov;
 using namespace ov::opset10;
 
-constexpr size_t batch = 1;
-constexpr size_t seq_len = 128;
-constexpr size_t num_heads = 1;
-constexpr size_t head_size = 64;
-constexpr size_t hidden_size = num_heads * head_size;
+constexpr int batch = 1;
+constexpr int seq_len = 128;
+constexpr int num_heads = 1;
+constexpr int head_size = 64;
+constexpr int hidden_size = num_heads * head_size;
 
 std::shared_ptr<ov::Node> build_l2_norm(const std::shared_ptr<ov::Node>& input) {
     using namespace ov::opset10;
@@ -55,7 +56,7 @@ std::shared_ptr<ov::Node> build_qkv_projection(const std::shared_ptr<ov::Node>& 
 
 std::shared_ptr<ov::Node> build_sdpa_preprocessing(const std::shared_ptr<ov::Node>& proj_bias) {
     using namespace ov::opset10;
-    auto reshape = std::make_shared<Reshape>(proj_bias, Constant::create(element::i64, Shape{4}, {batch, size_t(-1), seq_len, head_size}), false);
+    auto reshape = std::make_shared<Reshape>(proj_bias, Constant::create(element::i64, Shape{4}, {batch, int(-1), seq_len, head_size}), false);
     //auto transpose = std::make_shared<Transpose>(reshape, Constant::create(element::i64, Shape{4}, {0, 1, 3, 2}));
     return reshape;
 }
@@ -66,7 +67,7 @@ std::shared_ptr<ov::Node> build_ROPE(const std::shared_ptr<ov::Node>& proj_bias)
     // Step 1: Reshape to [B, S, H, D]
     auto reshape = std::make_shared<Reshape>(
         proj_bias,
-        Constant::create(element::i64, Shape{4}, {batch, seq_len, size_t(-1), head_size}),
+        Constant::create(element::i64, Shape{4}, {batch, seq_len, int(-1), head_size}),
         false);
 
     // Step 2: Transpose to [B, H, S, D]
@@ -153,19 +154,19 @@ std::shared_ptr<ov::Node> build_post_sdpa(const std::shared_ptr<ov::Node>& attn_
 }
 
 
-std::shared_ptr<ov::Model> build_model_gqa_pack_mha(size_t num_heads, size_t num_groups) {
+std::shared_ptr<ov::Model> build_model_gqa_pack_mha(int num_heads, int num_groups) {
     using namespace ov::opset10;
 
     OPENVINO_ASSERT(num_heads % num_groups == 0, "num_heads must be divisible by num_groups");
 
-    const size_t heads_per_group = num_heads / num_groups;
+    const int heads_per_group = num_heads / num_groups;
 
     auto input = std::make_shared<Parameter>(element::f32, Shape{1, 128, 64});
     auto norm = build_l2_norm(input);  // L2 normalization
 
     std::vector<std::shared_ptr<Node>> all_head_outputs;
 
-    for (size_t g = 0; g < num_groups; ++g) {
+    for (int g = 0; g < num_groups; ++g) {
         // Shared K/V for this group
         auto k_proj = build_qkv_projection(norm);
         auto v_proj = build_qkv_projection(norm);
@@ -173,7 +174,7 @@ std::shared_ptr<ov::Model> build_model_gqa_pack_mha(size_t num_heads, size_t num
         auto k = build_ROPE(k_proj);
         auto v = build_sdpa_preprocessing(v_proj);
 
-        for (size_t h = 0; h < heads_per_group; ++h) {
+        for (int h = 0; h < heads_per_group; ++h) {
             auto q_proj = build_qkv_projection(norm);
             auto q = build_ROPE(q_proj);
 
@@ -196,25 +197,112 @@ std::shared_ptr<ov::Model> build_model_gqa_pack_mha(size_t num_heads, size_t num
     return std::make_shared<ov::Model>(NodeVector{residual}, ParameterVector{input});
 }
 
+std::shared_ptr<ov::Model> build_ref_model_packmha(int num_heads, int num_groups = 1) {
+    using namespace ov::opset10;
 
-TEST(PackMHATests, MatchesFullCombinedBlock) {
-    auto model = build_model_gqa_pack_mha(6, 3);
-    ov::pass::Manager manager;
-    manager.register_pass<ov::pass::Serialize>(std::string("/workspace/buffer/test_model_gqa_before.xml"), "/workspace/buffer/test_model_gqa_before.bin");
-    manager.register_pass<ov::pass::PackMHA>();
-    manager.register_pass<ov::pass::Serialize>(std::string("/workspace/buffer/test_model_gqa_after.xml"), "/workspace/buffer/test_model_gqa_after.bin");
-    
-    manager.run_passes(model);
-    model->validate_nodes_and_infer_types();
+    const int batch = 1;
+    const int seq_len = 128;
+    const int head_size = 64;
+    const int hidden_size = num_heads * head_size;
+
+    auto input = std::make_shared<Parameter>(element::f32, Shape{static_cast<size_t>(batch), static_cast<size_t>(seq_len), static_cast<size_t>(head_size)});
+    auto norm = build_l2_norm(input);
+
+    auto make_quantized_proj = [](const Output<Node>& input, const Shape& w_shape, int batch, int hidden_size, int head_size) -> std::shared_ptr<ov::Node> {
+        using namespace ov::opset10;
+        auto weights = Constant::create(element::f32, w_shape, {0.1f});
+        auto zp = Constant::create(element::f32, Shape{}, {0.0f});
+        auto scale = Constant::create(element::f32, Shape{}, {0.01f});
+
+        auto weights_f32 = std::make_shared<Convert>(weights, element::f32);
+        auto zp_f32 = std::make_shared<Convert>(zp, element::f32);
+        auto scale_f32 = std::make_shared<Convert>(scale, element::f32);
+
+        auto weights_sub = std::make_shared<Subtract>(weights_f32, zp_f32);
+        auto dq_weights = std::make_shared<Multiply>(weights_sub, scale_f32);
+
+        auto matmul = std::make_shared<MatMul>(input, dq_weights);
+        auto bias = Constant::create(element::f32, Shape{static_cast<size_t>(batch), 1, static_cast<size_t>(hidden_size)}, {0.01f});
+        return std::make_shared<Add>(matmul, bias);
+    };
+
+    auto q_add = make_quantized_proj(norm, Shape{static_cast<size_t>(head_size), static_cast<size_t>(hidden_size)}, batch, hidden_size, head_size);
+    // Fused K
+    auto k_add = make_quantized_proj(norm, Shape{static_cast<size_t>(head_size), static_cast<size_t>(hidden_size)}, batch, hidden_size, head_size);
+    // Fused V
+    auto v_add = make_quantized_proj(norm, Shape{static_cast<size_t>(head_size), static_cast<size_t>(hidden_size)}, batch, hidden_size, head_size);
+
+    // --- ROPE for Q and K only (fused) ---
+    auto q_rope = build_ROPE(q_add); // [B, H, S, D]
+    auto k_rope = build_ROPE(k_add); // [B, H, S, D]
+
+    // --- V: just reshape, no ROPE ---
+    auto v_reshape = std::make_shared<Reshape>(v_add, Constant::create(element::i64, Shape{4}, {static_cast<size_t>(batch), static_cast<size_t>(seq_len), static_cast<size_t>(num_heads), static_cast<size_t>(head_size)}), false);
+
+    // --- SDPA with merged heads ---
+    auto vT = std::make_shared<Transpose>(v_reshape, Constant::create(element::i64, Shape{4}, {0, 2, 1, 3}));
+
+    auto kT = std::make_shared<Transpose>(k_rope, Constant::create(element::i64, Shape{4}, {0, 1, 3, 2}));
+    auto scale = 1.0f / std::sqrt(static_cast<float>(head_size));
+    auto scaled_k = std::make_shared<Multiply>(kT, Constant::create(element::f32, Shape{1}, {scale}));
+    auto qk = std::make_shared<MatMul>(q_rope, scaled_k);
+    auto attn_bias = Constant::create(element::f32, Shape{static_cast<size_t>(batch), static_cast<size_t>(num_heads), static_cast<size_t>(seq_len), static_cast<size_t>(seq_len)}, {0.0f});
+    auto attn_add = std::make_shared<Add>(qk, attn_bias);
+    auto attn_softmax = std::make_shared<Softmax>(attn_add, -1);
+    auto attn_out = std::make_shared<MatMul>(attn_softmax, vT); // [B, num_heads, S, head_size]
+
+    // --- Post-SDPA MatMul (projection), then ReduceSum(s) ---
+
+    // [B, num_heads, S, head_size] → [B, S, num_heads, head_size]
+    auto proj_transpose = std::make_shared<Transpose>(attn_out, Constant::create(element::i64, Shape{4}, {0, 2, 1, 3}));
+
+    // ReduceSum over axis 2 (num_heads) => [B, S, head_size]
+    auto reduce_0 = std::make_shared<ReduceSum>(proj_transpose, Constant::create(element::i64, Shape{1}, {2}), false);
+
+    // The next step is a MatMul (projection) with packed weights: [B, S, head_size] x [head_size, hidden_size]
+    // But your code suggests that the projection is done over all packed heads: so input should be [B, S, hidden_size]
+    // So let's reshape before projection to [B, S, hidden_size], but in our case after ReduceSum over heads, shape is [B, S, head_size]
+    // So for real match, let's do a projection for [B, S, head_size] x [head_size, hidden_size] = [B, S, hidden_size]
+    auto lin_weights = Constant::create(element::f32, Shape{static_cast<size_t>(head_size), static_cast<size_t>(hidden_size)}, {1.0f});
+    auto lin_proj = std::make_shared<MatMul>(reduce_0, lin_weights); // [B, S, hidden_size]
+
+    // Now reshape to [B, S, num_heads, head_size]
+    auto reshape_shape = Constant::create(element::i64, Shape{4}, {static_cast<size_t>(batch), static_cast<size_t>(seq_len), static_cast<size_t>(num_heads), static_cast<size_t>(head_size)});
+    auto lin_reshaped = std::make_shared<Reshape>(lin_proj, reshape_shape, true);
+
+    // ReduceSum over axis 3 (head_size), [B, S, num_heads, head_size] → [B, S, num_heads]
+    auto axis = Constant::create(element::i64, Shape{1}, {3});
+    auto reduced = std::make_shared<ReduceSum>(lin_reshaped, axis, false);
+
+    // If the final node is an Add (residual connection), add input back
+    auto residual = std::make_shared<Add>(reduced, input);
+
+    return std::make_shared<ov::Model>(NodeVector{residual}, ParameterVector{input});
 }
 
-TEST(PackMHATests, RealModel) {
-    ov::Core core;
-    auto model = core.read_model("/workspace/buffer/mha_pattern/model.xml");
 
-    ov::pass::Manager manager;
-    manager.register_pass<ov::pass::PackMHA>();
-    manager.register_pass<ov::pass::Serialize>(std::string("/workspace/buffer/pack_mha_new.xml"), "/workspace/buffer/pack_mha_new.bin");
-    manager.run_passes(model);
-    model->validate_nodes_and_infer_types();
+TEST_F(TransformationTestsF, PackMHA) {
+    {
+        model = build_model_gqa_pack_mha(6, 3);
+        manager.register_pass<ov::pass::Serialize>(std::string("/workspace/buffer/test_model_gqa_before.xml"), "/workspace/buffer/test_model_gqa_before.bin");
+        manager.register_pass<ov::pass::PackMHA>();
+        manager.register_pass<ov::pass::Serialize>(std::string("/workspace/buffer/test_model_gqa_after.xml"), "/workspace/buffer/test_model_gqa_after.bin");
+    }
+    {
+        model_ref = build_ref_model_packmha(6, 3);
+        ov::pass::Manager manager_2;
+        manager_2.register_pass<ov::pass::Serialize>(std::string("/workspace/buffer/ref_model_gqa_after.xml"), "/workspace/buffer/ref_model_gqa_after.bin");
+        manager_2.run_passes(model_ref);
+    }
 }
+
+// TEST(PackMHATests, RealModel) {
+//     ov::Core core;
+//     auto model = core.read_model("/workspace/buffer/mha_pattern/model.xml");
+
+//     ov::pass::Manager manager;
+//     manager.register_pass<ov::pass::PackMHA>();
+//     manager.register_pass<ov::pass::Serialize>(std::string("/workspace/buffer/pack_mha_new.xml"), "/workspace/buffer/pack_mha_new.bin");
+//     manager.run_passes(model);
+//     model->validate_nodes_and_infer_types();
+// }

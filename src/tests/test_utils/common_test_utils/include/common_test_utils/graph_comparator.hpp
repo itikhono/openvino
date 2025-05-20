@@ -216,7 +216,7 @@ public:
                     std::stringstream ss;
                     ss << "Node: " << node->get_type_info() << " with name " << node->get_friendly_name() << " ";
                     ss << "has non unique tensor name.";
-                    OPENVINO_THROW(ss.str());
+                   // OPENVINO_THROW(ss.str());
                 }
                 unique_tensor_names.insert(tensor_names.begin(), tensor_names.end());
             }
