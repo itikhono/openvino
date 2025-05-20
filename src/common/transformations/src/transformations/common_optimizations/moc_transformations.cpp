@@ -220,6 +220,7 @@ bool ov::pass::MOCTransformations::run_on_model(const std::shared_ptr<ov::Model>
     eliminations->set_name("ov::pass::CommonEliminations");
 
     manager.register_pass<ov::pass::ConstantFolding>();
+    REGISTER_PASS(manager, SDPAFusion)
 
     auto common_fusions = manager.register_pass<ov::pass::GraphRewrite>();
     ADD_MATCHER(common_fusions, ConvertScatterElementsToScatter)
@@ -241,7 +242,6 @@ bool ov::pass::MOCTransformations::run_on_model(const std::shared_ptr<ov::Model>
     ADD_MATCHER(common_fusions, ConvertTensorIteratorToSequence)
     ADD_MATCHER(common_fusions, SplitConcatPairToInterpolateFusion, m_use_shapes)
     ADD_MATCHER(common_fusions, ConvolutionToGroupConvolutionFusion)
-    ADD_MATCHER(common_fusions, SDPAFusion)
     if (m_use_shapes) {
         ADD_MATCHER(common_fusions, NearestNeighborUpsamplingFusion)
     }
